@@ -50,8 +50,7 @@ export default function Navbar() {
         {/* CTA (hard right) */}
         <div className="ml-auto flex items-center gap-3">
           <a
-            href="#system"
-            onClick={(e) => handleAnchor(e, "#system")}
+            href="/room"
             className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-2.5 text-sm font-bold text-black transition hover:-translate-y-0.5"
           >
             Launch HackQ

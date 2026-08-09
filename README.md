@@ -14,7 +14,7 @@ This repository contains the HackQ marketing landing page — a single-page, mot
 - **GSAP** — scroll-driven timelines
 - **Lenis** — buttery smooth scrolling
 - **Cobe** — canvas globe for the hero
-- **Fontsource variable fonts** — Familjen Grotesk, Geist, Inter, JetBrains Mono, Oswald, Space Grotesk
+- **Fontsource variable fonts** — Familjen Grotesk (landing), Geist (auth), JetBrains Mono (mono accents)
 
 ## Getting Started
 

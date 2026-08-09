@@ -1,20 +1,33 @@
 "use client";
 
+import "@fontsource-variable/jetbrains-mono";
 import { Fragment, useEffect, useState } from "react";
 import { MotionConfig, motion } from "motion/react";
 import Navbar from "@/components/Navbar";
 import LetterReveal from "@/components/LetterReveal";
 import LiquidCursor from "@/components/LiquidCursor";
+import dynamic from "next/dynamic";
 import { BentoCard, BentoGrid } from "@/components/ui/bento-grid";
-import { Globe } from "@/components/ui/globe";
 import { NoiseTexture } from "@/components/ui/noise-texture";
 import ZoomOnScroll from "@/components/ZoomOnScroll";
 import ParallaxSection from "@/components/ParallaxSection";
 import SmoothScroll from "@/components/SmoothScroll";
 import ScrollProgress from "@/components/ScrollProgress";
-import { scrollToHash } from "@/lib/smooth-scroll";
+import Link from "next/link";
+
+// Cobe's globe is the heaviest third-party chunk on this page; load it only
+// when it's about to render (it sits below the fold in the bento grid).
+const Globe = dynamic(
+  () => import("@/components/ui/globe").then((m) => m.Globe),
+  { ssr: false, loading: () => null }
+);
 
 const HERO_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+
+// Hosted on CloudFront so the raw file isn't shipped in the repo; the page
+// also hardens the <video> element against right-click / drag-to-save.
+const HERO_VIDEO_URL =
+  "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260506_031045_0e1165dd-ab48-46e3-ad3d-5fe77f217647.mp4";
 
 const marqueeItems = [
   {
@@ -366,19 +379,24 @@ export default function Home() {
         <section className="relative h-screen w-full overflow-hidden">
           {/* Background video */}
           <video
-            src="/hero.mp4"
+            src={HERO_VIDEO_URL}
             autoPlay
             muted
             loop
             playsInline
+            preload="auto"
             controlsList="nodownload nofullscreen noremoteplayback"
             disablePictureInPicture
+            draggable={false}
             onContextMenu={(e) => e.preventDefault()}
+            onDragStart={(e) => e.preventDefault()}
             className="absolute inset-0 z-0 h-full w-full object-cover"
             style={{
               objectPosition: "50% 18%",
               animation: "ambientShift 24s ease-in-out infinite",
-              willChange: "transform, filter",
+              // Static brightness (rasterized once); animating it would repaint every frame.
+              filter: "brightness(0.95)",
+              willChange: "transform",
               transformOrigin: "center center",
               pointerEvents: "none",
               WebkitUserSelect: "none",
@@ -420,12 +438,8 @@ export default function Home() {
               transition={{ duration: 0.7, delay: 1.3, ease: HERO_EASE }}
               className="mt-9"
             >
-              <a
-                href="#system"
-                onClick={(e) => {
-                  e.preventDefault();
-                  scrollToHash("#system");
-                }}
+              <Link
+                href="/room"
                 className="group relative inline-flex items-center gap-3 pb-1 text-xl font-normal text-[#d4d4d4] transition hover:opacity-80"
               >
                 <span>Start Building free</span>
@@ -445,7 +459,7 @@ export default function Home() {
                   </svg>
                 </span>
                 <span className="absolute inset-x-0 bottom-0 h-px bg-[#d4d4d4]/50 transition group-hover:bg-[#d4d4d4]"></span>
-              </a>
+              </Link>
             </motion.div>
           </div>
 
@@ -471,7 +485,7 @@ export default function Home() {
         <section id="system" className="relative flex w-full flex-col bg-black">
           {/* Marquee */}
           <div
-            className="relative w-full border-y border-white/[0.06] py-12"
+            className="relative w-full border-y border-white/[0.06] py-8 sm:py-12"
             style={{
               background:
                 "linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%)",
@@ -538,8 +552,15 @@ export default function Home() {
           <div className="relative flex flex-col items-center px-6 py-10 sm:px-8">
             {/* Soft lime glow behind the grid */}
             <div className="pointer-events-none absolute left-1/2 top-1/2 z-0 h-80 w-[52rem] max-w-full -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#9eff00]/10 blur-3xl" />
-            {/* Subtle grain texture behind the grid */}
-            <NoiseTexture frequency={0.9} octaves={3} slope={0.25} noiseOpacity={0.5} />
+            {/* Subtle grain texture behind the grid — masked so its top/bottom
+                edges fade out instead of drawing a visible box around the grid. */}
+            <NoiseTexture
+              frequency={0.9}
+              octaves={3}
+              slope={0.25}
+              noiseOpacity={0.5}
+              className="[mask-image:linear-gradient(180deg,transparent,black_15%,black_85%,transparent)]"
+            />
             <motion.h2
               initial={{ opacity: 0, y: 24 }}
               whileInView={{ opacity: 1, y: 0 }}
@@ -620,7 +641,7 @@ export default function Home() {
           <ZoomOnScroll className="px-6 sm:px-8">
             <div className="mx-auto grid w-full max-w-6xl grid-cols-1 overflow-hidden rounded-3xl border border-white/10 lg:grid-cols-2">
             {/* Left: dark panel — the loop */}
-            <div className="flex flex-col gap-10 bg-[#0b0b0b] p-10 sm:p-14">
+            <div className="flex flex-col gap-10 bg-[#0b0b0b] p-7 sm:p-14">
               <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-[#9eff00]">
                 {"// from zero to demo"}
               </p>
@@ -656,7 +677,7 @@ export default function Home() {
             {/* Right: lime panel — the manifesto */}
             <div
               id="manifesto"
-              className="flex flex-col justify-between gap-14 bg-[#b4ff39] p-10 sm:p-14"
+              className="flex flex-col justify-between gap-14 bg-[#b4ff39] p-7 sm:p-14"
             >
               <span className="flex items-center gap-1 font-mono text-lg font-semibold leading-none text-black/60">
                 &gt;
@@ -721,17 +742,13 @@ export default function Home() {
             <p className="mt-5 max-w-md text-base font-light leading-relaxed text-[#d4d4d4]/60">
               One room, one loop, 48 hours. Your team&apos;s momentum, visible in realtime.
             </p>
-            <a
-              href="#system"
-              onClick={(e) => {
-                e.preventDefault();
-                scrollToHash("#system");
-              }}
+            <Link
+              href="/room"
               className="mt-10 inline-flex items-center gap-2 rounded-full bg-[#9eff00] px-8 py-3.5 text-sm font-bold text-black shadow-[0_0_30px_rgba(158,255,0,0.35)] transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_0_45px_rgba(158,255,0,0.55)]"
             >
               Start Building free
               <span className="text-base leading-none">→</span>
-            </a>
+            </Link>
           </motion.div>
         </ParallaxSection>
       </main>

@@ -23,6 +23,15 @@ export default function LiquidCursor() {
   const [pointerFine] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(pointer: fine)").matches
   );
+  // Low-end / small-screen fallback: the full-viewport goo filter re-rasterizes
+  // on every pointer move, so skip it and render plain blobs instead.
+  // Evaluated once — device capability doesn't change at runtime.
+  const [lowPower] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const cores = navigator.hardwareConcurrency ?? 8;
+    const mem = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8;
+    return window.innerWidth < 768 || cores <= 4 || (mem > 0 && mem <= 4);
+  });
   const [visible, setVisible] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [pressed, setPressed] = useState(false);
@@ -85,44 +94,48 @@ export default function LiquidCursor() {
     <motion.div
       aria-hidden
       className="pointer-events-none fixed inset-0 z-[9999] overflow-hidden"
-      style={{ filter: "url(#liquid-goo)" }}
+      style={lowPower ? {} : { filter: "url(#liquid-goo)" }}
       initial={{ opacity: 0 }}
       animate={{ opacity: visible ? 1 : 0 }}
       transition={{ duration: 0.3, ease: "easeOut" }}
     >
-      {/* SVG goo filter — merges the blobs into liquid */}
-      <svg width="0" height="0" className="absolute">
-        <defs>
-          <filter id="liquid-goo">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur" />
-            <feColorMatrix
-              in="blur"
-              mode="matrix"
-              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -11"
-              result="goo"
-            />
-          </filter>
-        </defs>
-      </svg>
+      {/* SVG goo filter — merges the blobs into liquid (skipped on low-power) */}
+      {!lowPower && (
+        <svg width="0" height="0" className="absolute">
+          <defs>
+            <filter id="liquid-goo">
+              {/* Lower stdDeviation: the full-viewport goo filter re-rasterizes on
+                  every pointer move, so smaller blur is a big runtime win. */}
+              <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
+              <feColorMatrix
+                in="blur"
+                mode="matrix"
+                values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 22 -11"
+                result="goo"
+              />
+            </filter>
+          </defs>
+        </svg>
+      )}
 
       {/* trailing drop */}
       <motion.div
         className="liquid-blob"
-        style={{ x: tailX, y: tailY, translateX: "-50%", translateY: "-50%" }}
+        style={{ x: tailX, y: tailY, translateX: "-50%", translateY: "-50%", willChange: "transform" }}
         animate={{ width: hovered ? 18 : 12, height: hovered ? 18 : 12 }}
         transition={{ type: "spring", stiffness: 300, damping: 24 }}
       />
       {/* mid drop */}
       <motion.div
         className="liquid-blob"
-        style={{ x: midX, y: midY, translateX: "-50%", translateY: "-50%" }}
+        style={{ x: midX, y: midY, translateX: "-50%", translateY: "-50%", willChange: "transform" }}
         animate={{ width: hovered ? 26 : 18, height: hovered ? 26 : 18 }}
         transition={{ type: "spring", stiffness: 300, damping: 24 }}
       />
       {/* main blob */}
       <motion.div
         className="liquid-blob liquid-blob--main"
-        style={{ x: mainX, y: mainY, translateX: "-50%", translateY: "-50%" }}
+        style={{ x: mainX, y: mainY, translateX: "-50%", translateY: "-50%", willChange: "transform" }}
         animate={{
           width: hovered ? 52 : 34,
           height: hovered ? 52 : 34,

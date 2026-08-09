@@ -3,33 +3,29 @@
 @theme {
   --color-canvas: #000;
   --color-ink: #f5f5f7;
+  /* Matte premium green for the auth pages (muted, non-neon). */
+  --color-matte: #a6c83a;
   --font-sans: "Familjen Grotesk Variable", -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
   --animate-marquee: marquee var(--duration, 45s) linear infinite;
-  --animate-orbit: orbit calc(var(--duration) * 1s) linear infinite;
 
   @keyframes marquee {
     from { transform: translateX(0); }
     to { transform: translateX(-50%); }
   }
-
-  @keyframes orbit {
-    0% {
-      transform: rotate(calc(var(--angle) * 1deg))
-        translateY(calc(var(--radius) * 1px))
-        rotate(calc(var(--angle) * -1deg));
-    }
-    100% {
-      transform: rotate(calc(var(--angle) * 1deg + 360deg))
-        translateY(calc(var(--radius) * 1px))
-        rotate(calc((var(--angle) * -1deg) - 360deg));
-    }
-  }
 }
 
+/* Scale-only: animating filter on a full-screen video repaints every frame.
+   The brightness is applied once (static) on the <video> element instead. */
 @keyframes ambientShift {
-  0%, 100% { transform: scale(1.02); filter: brightness(0.95); }
-  50%      { transform: scale(1.08); filter: brightness(1.05); }
+  0%, 100% { transform: scale(1.02); }
+  50%      { transform: scale(1.08); }
+}
+
+/* Auth map fade-in (rendered client-side after mount) */
+@keyframes mapAppear {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @keyframes blink {
@@ -80,9 +76,53 @@
   100% { transform: translateY(0); opacity: 0; }
 }
 
+/* Auth dotted map: dots brighten toward white on hover (markers in <g> stay
+   untouched — only direct-child dots are targeted). */
+.dotted-map > circle {
+  fill: rgba(214, 220, 228, 0.5);
+  transition: fill 0.3s ease;
+}
+
+.dotted-map:hover > circle {
+  fill: rgba(255, 255, 255, 0.9);
+}
+
+/* ---------- Aceternity-style ambient effects ---------- */
+
+/* Light beams drifting behind dark sections */
+@keyframes beamDrift {
+  0%, 100% { transform: translate3d(0, -10%, 0); opacity: calc(var(--beam-opacity, 0.5) * 0.5); }
+  50%      { transform: translate3d(0, 10%, 0); opacity: var(--beam-opacity, 0.5); }
+}
+
+/* Sweeping highlight along a card's top edge */
+@keyframes beamSweep {
+  0%        { transform: translateX(-130%); }
+  55%, 100% { transform: translateX(430%); }
+}
+
+/* Rotating gradient border for hover-border buttons */
+@keyframes hoverBorderSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* Auth card artwork: slow drift of the fluid-mesh blobs */
+@keyframes artworkDrift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%      { transform: translate3d(5%, -7%, 0) scale(1.12); }
+  66%      { transform: translate3d(-4%, 6%, 0) scale(0.95); }
+}
+
+.artwork-blob {
+  will-change: transform;
+  animation: artworkDrift 16s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .eq-bar,
-  .pulse-dot {
+  .pulse-dot,
+  .artwork-blob,
+  .beams-beam {
     animation: none;
   }
 
