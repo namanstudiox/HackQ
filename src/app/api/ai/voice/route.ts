@@ -20,6 +20,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing team or message." }, { status: 400 });
   }
 
+  // Feature flag — voice-note AI analysis is off by default. Set
+  // ENABLE_VOICE_AI=true to bring the endpoint back (the ⚡ button is gated by
+  // the same flag in ChatView). Kept behind the flag so it's a one-line
+  // re-enable, not a code archaeology dig.
+  if (process.env.ENABLE_VOICE_AI !== "true") {
+    return NextResponse.json(
+      { error: "Voice analysis is currently disabled." },
+      { status: 503 }
+    );
+  }
+
   const supabase = await createClient();
   const {
     data: { user },

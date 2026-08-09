@@ -22,6 +22,10 @@ import { cn } from "@/lib/utils";
 /** Auto-stop recordings at a minute — keeps each note inside localStorage budget. */
 const MAX_VOICE_SECONDS = 60;
 
+/** Feature flag — voice-note AI analysis (transcribe → plan) is off for now.
+ * Flip to true to bring back the ⚡ button and plan modal. */
+const VOICE_AI_ENABLED = false;
+
 const SendIcon = ({ className }: { className?: string }) => (
   <svg
     viewBox="0 0 24 24"
@@ -301,7 +305,7 @@ export default function ChatView({
 
   /** ⚡ Analyze a voice note — transcribe + plan, WhisperFlow-style. */
   const analyzeNote = async (m: ChatMessage) => {
-    if (analyzingId || !m.voice) return;
+    if (!VOICE_AI_ENABLED || analyzingId || !m.voice) return;
     setAiError(null);
     setPlanSaved(false);
     setAnalyzingId(m.id);
@@ -318,7 +322,7 @@ export default function ChatView({
 
   /** Save a generated plan to the idea board as a sticky note. */
   const addPlanToBoard = async (m: ChatMessage) => {
-    if (!m.plan) return;
+    if (!VOICE_AI_ENABLED || !m.plan) return;
     const steps = m.plan.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
     const text = `⚡ ${m.plan.title}\n\n${m.plan.summary}\n\n${steps}`;
     const offset = (m.id.charCodeAt(0) % 5) * 24;
@@ -934,35 +938,37 @@ function VoiceBubble({
       >
         {fmtDuration(duration)}
       </span>
-      <button
-        type="button"
-        onClick={onAnalyze}
-        aria-label={hasPlan ? "View AI plan" : "Analyze with AI"}
-        title={hasPlan ? "View the AI plan for this note" : "Analyze this note with AI"}
-        className={cn(
-          "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition active:scale-90",
-          hasPlan
-            ? mine
-              ? "text-amber-600 hover:bg-black/10"
-              : "text-amber-300/90 hover:bg-white/10"
-            : mine
-              ? "text-black/40 hover:bg-black/10 hover:text-black"
-              : "text-white/35 hover:bg-white/10 hover:text-white"
-        )}
-      >
-        {analyzing ? (
-          <motion.span
-            className={cn(
-              "h-3.5 w-3.5 rounded-full border-2 border-t-transparent",
-              mine ? "border-black/60" : "border-white/70"
-            )}
-            animate={{ rotate: 360 }}
-            transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
-          />
-        ) : (
-          <SparkleIcon className="h-3.5 w-3.5" />
-        )}
-      </button>
+      {VOICE_AI_ENABLED && (
+        <button
+          type="button"
+          onClick={onAnalyze}
+          aria-label={hasPlan ? "View AI plan" : "Analyze with AI"}
+          title={hasPlan ? "View the AI plan for this note" : "Analyze this note with AI"}
+          className={cn(
+            "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition active:scale-90",
+            hasPlan
+              ? mine
+                ? "text-amber-600 hover:bg-black/10"
+                : "text-amber-300/90 hover:bg-white/10"
+              : mine
+                ? "text-black/40 hover:bg-black/10 hover:text-black"
+                : "text-white/35 hover:bg-white/10 hover:text-white"
+          )}
+        >
+          {analyzing ? (
+            <motion.span
+              className={cn(
+                "h-3.5 w-3.5 rounded-full border-2 border-t-transparent",
+                mine ? "border-black/60" : "border-white/70"
+              )}
+              animate={{ rotate: 360 }}
+              transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
+            />
+          ) : (
+            <SparkleIcon className="h-3.5 w-3.5" />
+          )}
+        </button>
+      )}
     </div>
   );
 }
