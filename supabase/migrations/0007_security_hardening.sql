@@ -18,6 +18,7 @@
 
 -- ---------- 1. Stop team-data enumeration ----------
 drop policy if exists "teams_select_auth" on public.teams;
+drop policy if exists "teams_select_member_or_owner" on public.teams;
 create policy "teams_select_member_or_owner" on public.teams
   for select using (is_team_member(id) or is_team_owner(id));
 
@@ -125,6 +126,9 @@ $$;
 drop policy if exists "tasks_insert_member" on public.tasks;
 drop policy if exists "tasks_update_member" on public.tasks;
 drop policy if exists "tasks_delete_member" on public.tasks;
+drop policy if exists "tasks_insert_capable" on public.tasks;
+drop policy if exists "tasks_update_capable" on public.tasks;
+drop policy if exists "tasks_delete_capable" on public.tasks;
 create policy "tasks_insert_capable" on public.tasks
   for insert with check (
     is_team_member(team_id) and created_by = auth.uid() and team_can(team_id, 'edit-tasks')
@@ -138,6 +142,9 @@ create policy "tasks_delete_capable" on public.tasks
 drop policy if exists "ideas_insert_member" on public.ideas;
 drop policy if exists "ideas_update_member" on public.ideas;
 drop policy if exists "ideas_delete_member" on public.ideas;
+drop policy if exists "ideas_insert_capable" on public.ideas;
+drop policy if exists "ideas_update_capable" on public.ideas;
+drop policy if exists "ideas_delete_capable" on public.ideas;
 create policy "ideas_insert_capable" on public.ideas
   for insert with check (
     is_team_member(team_id) and author_id = auth.uid() and team_can(team_id, 'post-ideas')
@@ -149,12 +156,15 @@ create policy "ideas_delete_capable" on public.ideas
 
 -- messages — posting requires chat (reads stay member-only)
 drop policy if exists "messages_insert_member" on public.messages;
+drop policy if exists "messages_insert_capable" on public.messages;
 create policy "messages_insert_capable" on public.messages
   for insert with check (is_team_member(team_id) and author_id = auth.uid() and team_can(team_id, 'chat'));
 
 -- moods — check-ins require mood
 drop policy if exists "moods_insert_member" on public.moods;
 drop policy if exists "moods_update_member" on public.moods;
+drop policy if exists "moods_insert_capable" on public.moods;
+drop policy if exists "moods_update_capable" on public.moods;
 create policy "moods_insert_capable" on public.moods
   for insert with check (user_id = auth.uid() and team_can(team_id, 'mood'));
 create policy "moods_update_capable" on public.moods
@@ -172,6 +182,7 @@ create policy "moods_update_capable" on public.moods
 -- joining always goes through a join request + lead approval — so no
 -- legitimate self-insert exists.
 drop policy if exists "members_insert_self_or_owner" on public.team_members;
+drop policy if exists "members_insert_self_or_manage" on public.team_members;
 create policy "members_insert_self_or_manage" on public.team_members
   for insert with check (
     is_team_owner(team_id)
@@ -182,5 +193,6 @@ create policy "members_insert_self_or_manage" on public.team_members
 -- managers (lead/co-lead) see all of them. Regular members no longer learn
 -- who is trying to join.
 drop policy if exists "requests_select_member" on public.join_requests;
+drop policy if exists "requests_select_self_or_manage" on public.join_requests;
 create policy "requests_select_self_or_manage" on public.join_requests
   for select using (user_id = auth.uid() or can_manage_team(team_id));
