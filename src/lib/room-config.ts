@@ -287,6 +287,13 @@ export const MOODS: { id: MoodId; label: string; color: string }[] = [
   { id: "lost", label: "Lost", color: "#f472b6" }, // pink
 ];
 
+/** Structured plan extracted from a voice note (WhisperFlow-style). */
+export interface VoicePlan {
+  title: string;
+  summary: string;
+  steps: string[];
+}
+
 /** One chat message — author identity is resolved live from the roster. */
 export interface ChatMessage {
   id: string;
@@ -295,10 +302,16 @@ export interface ChatMessage {
   authorColor?: string;
   authorPfp?: string;
   text: string;
+  /** "message" (a person) or "ai" (the HackQ teammate) — drives rendering. */
+  kind?: "message" | "ai";
   /** Voice-note audio as a data URL (webm/opus or mp4), when a voice message. */
   voice?: string;
   /** Recording length in seconds (rounded up). */
   voiceDuration?: number;
+  /** Raw transcript once this voice note has been analyzed. */
+  transcript?: string;
+  /** AI-generated plan once this voice note has been analyzed. */
+  plan?: VoicePlan;
   /** Epoch ms. */
   at: number;
 }
@@ -597,9 +610,9 @@ export async function createTeam(input: {
   groupName: string;
   eventName: string;
   deadline: number;
-}): Promise<RoomConfig | null> {
+}): Promise<{ cfg: RoomConfig | null; error?: string }> {
   const me = await getCurrentUser();
-  if (!me) return null;
+  if (!me) return { cfg: null, error: "You're not signed in." };
 
   // Security-definer RPC: slug dedupe + the owner's lead row happen atomically
   // server-side (non-members can't SELECT teams for slug probing anymore).
@@ -611,10 +624,10 @@ export async function createTeam(input: {
   });
   const team = Array.isArray(data) ? data[0] : data;
   if (error || !team) {
-    // Surface the real failure (RLS/permission problems are invisible behind
-    // the generic "Couldn't set up the room" message otherwise).
+    // Surface the real failure — a missing migration (`create_team` RPC not
+    // applied), an RLS/permission issue, or an auth/session problem.
     console.error("[createTeam] insert failed:", error?.message ?? error);
-    return null;
+    return { cfg: null, error: error?.message ?? "The room could not be created." };
   }
 
   const { data: profile } = await supabase()
@@ -630,7 +643,7 @@ export async function createTeam(input: {
     pfp: (profile?.pfp as string | null) ?? null,
     role: "lead",
   };
-  return buildConfig(team as unknown as TeamRow, [self], me.id, []);
+  return { cfg: buildConfig(team as unknown as TeamRow, [self], me.id, []), error: undefined };
 }
 
 /** Look up a team by its URL slug — the /room/[slug] gateway. Any signed-in
@@ -1027,32 +1040,51 @@ export async function leaveTeam(teamId: string): Promise<{ ok: boolean; error?: 
 
 /* ---------------------------------------------------------------- chat */
 
-function mapMessage(row: {
-  id: string;
-  author_id: string;
-  text: string;
-  voice: string | null;
-  voice_duration: number | null;
-  created_at: string;
-}): ChatMessage {
+function mapMessage(
+  row: {
+    id: string;
+    author_id: string;
+    text: string;
+    voice: string | null;
+    voice_duration: number | null;
+    kind: string | null;
+    created_at: string;
+  },
+  plan?: { transcript: string; plan: VoicePlan }
+): ChatMessage {
   return {
     id: row.id,
     authorId: row.author_id,
     text: row.text,
+    kind: row.kind === "ai" ? "ai" : undefined,
     voice: row.voice ?? undefined,
     voiceDuration: row.voice_duration ?? undefined,
+    transcript: plan?.transcript,
+    plan: plan?.plan,
     at: ts(row.created_at),
   };
 }
 
 export async function loadChat(teamId: string): Promise<ChatMessage[]> {
-  const { data, error } = await supabase()
-    .from("messages")
-    .select("id, author_id, text, voice, voice_duration, created_at")
-    .eq("team_id", teamId)
-    .order("created_at", { ascending: true });
+  const [{ data, error }, { data: plans }] = await Promise.all([
+    supabase()
+      .from("messages")
+      .select("id, author_id, text, voice, voice_duration, kind, created_at")
+      .eq("team_id", teamId)
+      .order("created_at", { ascending: true }),
+    supabase()
+      .from("voice_plans")
+      .select("message_id, transcript, plan")
+      .eq("team_id", teamId),
+  ]);
   if (error || !data) return [];
-  return data.map((r) => mapMessage(r as never));
+  const planByMsg = new Map(
+    (plans ?? []).map((p) => [
+      p.message_id as string,
+      { transcript: p.transcript as string, plan: p.plan as VoicePlan },
+    ])
+  );
+  return data.map((r) => mapMessage(r as never, planByMsg.get((r as { id: string }).id)));
 }
 
 export async function appendChatMessage(
@@ -1070,10 +1102,58 @@ export async function appendChatMessage(
       voice: msg.voice ?? null,
       voice_duration: msg.voiceDuration ?? null,
     })
-    .select("id, author_id, text, voice, voice_duration, created_at")
+    .select("id, author_id, text, voice, voice_duration, kind, created_at")
     .single();
   if (error || !data) return null;
   return mapMessage(data as never);
+}
+
+/* ---------------------------------------------------------- AI teammate */
+
+/** Ask the HackQ teammate in the room chat — returns the saved AI reply. */
+export async function askAiTeammate(
+  teamId: string,
+  message: string
+): Promise<{ ok: boolean; error?: string; message?: ChatMessage }> {
+  try {
+    const res = await fetch("/api/ai/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ teamId, message }),
+    });
+    const json = (await res.json()) as { message?: unknown; error?: string };
+    if (!res.ok) {
+      return { ok: false, error: json.error ?? "The AI teammate couldn't reply." };
+    }
+    return { ok: true, message: mapMessage(json.message as never) };
+  } catch {
+    return { ok: false, error: "The AI teammate couldn't be reached." };
+  }
+}
+
+/** Analyze a voice note: transcribe it and build a plan (saved server-side). */
+export async function analyzeVoiceNote(
+  teamId: string,
+  messageId: string
+): Promise<{ ok: boolean; error?: string; transcript?: string; plan?: VoicePlan }> {
+  try {
+    const res = await fetch("/api/ai/voice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ teamId, messageId }),
+    });
+    const json = (await res.json()) as {
+      error?: string;
+      transcript?: string;
+      plan?: VoicePlan;
+    };
+    if (!res.ok) {
+      return { ok: false, error: json.error ?? "Couldn't analyze that note." };
+    }
+    return { ok: true, transcript: json.transcript, plan: json.plan };
+  } catch {
+    return { ok: false, error: "Voice analysis couldn't be reached." };
+  }
 }
 
 /* ---------------------------------------------------------------- board */

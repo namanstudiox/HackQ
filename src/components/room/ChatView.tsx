@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { Beams } from "@/components/ui/beams";
 import { Avatar } from "@/components/room/Avatar";
 import {
+  addIdea,
+  analyzeVoiceNote,
   appendChatMessage,
+  askAiTeammate,
   loadChat,
+  NOTE_COLORS,
   roleCan,
   subscribeToRoom,
   type ChatMessage,
@@ -89,6 +93,31 @@ const CheckIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const PlusIcon = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" className={className}>
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+);
+
+/** The HackQ teammate's mark — used for bot avatars and AI affordances. */
+const SparkleIcon = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={className}>
+    <path d="M12 2.5l1.7 5.3 5.3 1.7-5.3 1.7L12 16.5l-1.7-5.3L5 9.5l5.3-1.7z" />
+    <path d="M19.5 14l.8 2.4 2.4.8-2.4.8-.8 2.4-.8-2.4-2.4-.8 2.4-.8z" opacity="0.7" />
+  </svg>
+);
+
+const BotAvatar = ({ size = "sm" }: { size?: "sm" }) => (
+  <span
+    className={cn(
+      "flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-indigo-400 via-violet-400 to-fuchsia-400 text-black shadow-[0_0_18px_rgba(139,92,246,0.35)]",
+      size === "sm" && "h-8 w-8"
+    )}
+  >
+    <SparkleIcon className="h-3.5 w-3.5" />
+  </span>
+);
+
 function fmtTime(at: number): string {
   return new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
@@ -130,10 +159,13 @@ function waveBars(seed: string, count: number): number[] {
 export default function ChatView({
   config,
   me,
+  onOpenBoard,
 }: {
   config: RoomConfig;
   /** The member object that represents *me* in this room. */
   me: TeamMember;
+  /** Switch to the idea board (plan modal's "open board" action). */
+  onOpenBoard?: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -143,6 +175,13 @@ export default function ChatView({
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   // Capability gate — mirrors the server-side `chat` RLS policy.
   const canChat = roleCan(me.role, config.roles, "chat");
+
+  /* ---------- AI teammate + voice analysis ---------- */
+  const [aiThinking, setAiThinking] = useState(false);
+  const [analyzingId, setAnalyzingId] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [planMsg, setPlanMsg] = useState<ChatMessage | null>(null);
+  const [planSaved, setPlanSaved] = useState(false);
 
   /* ---------- voice recording ---------- */
   const [recording, setRecording] = useState(false);
@@ -215,6 +254,13 @@ export default function ChatView({
     e?.preventDefault();
     const text = draft.trim();
     if (!text) return;
+    if (/\B@(hackq|ai)\b/i.test(text)) {
+      await sendToAi(text);
+      setDraft("");
+      if (inputRef.current) inputRef.current.style.height = "auto";
+      inputRef.current?.focus();
+      return;
+    }
     const msg = await appendChatMessage(config.teamId, {
       authorId: me.id,
       text,
@@ -225,6 +271,24 @@ export default function ChatView({
     inputRef.current?.focus();
   };
 
+  /** Route a message that mentions @HackQ / @AI to the teammate. */
+  const sendToAi = async (text: string) => {
+    if (aiThinking) return;
+    setAiError(null);
+    setAiThinking(true);
+    // Persist the human prompt first so the thread reads coherently for
+    // everyone (they'd otherwise see an AI reply with no visible question).
+    const human = await appendChatMessage(config.teamId, { authorId: me.id, text });
+    if (human) setMessages((prev) => [...prev, human].slice(-500));
+    const res = await askAiTeammate(config.teamId, text);
+    setAiThinking(false);
+    if (!res.ok) {
+      setAiError(res.error ?? "The AI teammate couldn't reply.");
+      return;
+    }
+    if (res.message) setMessages((prev) => [...prev, res.message!].slice(-500));
+  };
+
   const sendVoice = async (dataUrl: string, seconds: number) => {
     const msg = await appendChatMessage(config.teamId, {
       authorId: me.id,
@@ -233,6 +297,46 @@ export default function ChatView({
       voiceDuration: seconds,
     });
     if (msg) setMessages((prev) => [...prev, msg]);
+  };
+
+  /** ⚡ Analyze a voice note — transcribe + plan, WhisperFlow-style. */
+  const analyzeNote = async (m: ChatMessage) => {
+    if (analyzingId || !m.voice) return;
+    setAiError(null);
+    setPlanSaved(false);
+    setAnalyzingId(m.id);
+    const res = await analyzeVoiceNote(config.teamId, m.id);
+    setAnalyzingId(null);
+    if (!res.ok || !res.plan) {
+      setAiError(res.error ?? "Couldn't analyze that note.");
+      return;
+    }
+    const updated: ChatMessage = { ...m, transcript: res.transcript, plan: res.plan };
+    setMessages((prev) => prev.map((x) => (x.id === m.id ? updated : x)));
+    setPlanMsg(updated);
+  };
+
+  /** Save a generated plan to the idea board as a sticky note. */
+  const addPlanToBoard = async (m: ChatMessage) => {
+    if (!m.plan) return;
+    const steps = m.plan.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
+    const text = `⚡ ${m.plan.title}\n\n${m.plan.summary}\n\n${steps}`;
+    const offset = (m.id.charCodeAt(0) % 5) * 24;
+    const note = await addIdea(config.teamId, {
+      text,
+      color: NOTE_COLORS[m.id.charCodeAt(1) % NOTE_COLORS.length],
+      x: 80 + offset,
+      y: 80 + offset,
+      authorId: me.id,
+      authorName: me.name,
+      authorColor: me.color,
+      authorPfp: me.pfp,
+    });
+    if (!note) {
+      setAiError("Your role can't post to the idea board.");
+      return;
+    }
+    setPlanSaved(true);
   };
 
   /** Stop the recorder; `send` decides whether the blob becomes a message. */
@@ -427,7 +531,8 @@ export default function ChatView({
           </div>
         ) : (
           messages.map((m) => {
-            const mine = m.authorId === me.id;
+            const isAi = m.kind === "ai";
+            const mine = m.authorId === me.id && !isAi;
             const playing = playingId === m.id;
             // Live identity — current name/pfp/color, falling back to the
             // send-time snapshot if the member has left.
@@ -443,16 +548,20 @@ export default function ChatView({
                 transition={{ type: "spring", stiffness: 380, damping: 30 }}
                 className={cn("flex items-end gap-2.5", mine && "flex-row-reverse")}
               >
-                <Avatar name={author.name} color={author.color} src={author.pfp} size="sm" />
+                {isAi ? (
+                  <BotAvatar />
+                ) : (
+                  <Avatar name={author.name} color={author.color} src={author.pfp} size="sm" />
+                )}
                 <div className={cn("flex max-w-[78%] flex-col gap-1", mine && "items-end")}>
                   <div className="flex items-baseline gap-2">
                     <span
                       className={cn(
                         "text-[11px] font-medium",
-                        mine ? "text-white/60" : "text-white/80"
+                        isAi ? "text-violet-300" : mine ? "text-white/60" : "text-white/80"
                       )}
                     >
-                      {mine ? "you" : author.name}
+                      {isAi ? "HackQ" : mine ? "you" : author.name}
                     </span>
                     <span className="font-mono text-[9px] text-white/30">{fmtTime(m.at)}</span>
                   </div>
@@ -463,6 +572,9 @@ export default function ChatView({
                       playing={playing}
                       progress={playing ? playProgress : 0}
                       onToggle={() => togglePlay(m)}
+                      analyzing={analyzingId === m.id}
+                      hasPlan={Boolean(m.plan)}
+                      onAnalyze={() => analyzeNote(m)}
                     />
                   ) : null}
                   {m.text ? (
@@ -482,8 +594,48 @@ export default function ChatView({
             );
           })
         )}
+        {aiThinking && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-end gap-2.5"
+          >
+            <BotAvatar />
+            <div className="flex max-w-[78%] flex-col gap-1">
+              <span className="text-[11px] font-medium text-violet-300">HackQ</span>
+              <div className="flex items-center gap-2.5 rounded-2xl rounded-bl-md border border-white/10 bg-white/[0.05] px-3.5 py-3">
+                <span className="flex gap-1">
+                  {[0, 1, 2].map((i) => (
+                    <motion.span
+                      key={i}
+                      className="h-1.5 w-1.5 rounded-full bg-violet-300/90"
+                      animate={{ opacity: [0.2, 1, 0.2] }}
+                      transition={{ duration: 1, repeat: Infinity, delay: i * 0.18 }}
+                    />
+                  ))}
+                </span>
+                <span className="text-xs text-white/40">thinking…</span>
+              </div>
+            </div>
+          </motion.div>
+        )}
         <div ref={bottomRef} />
       </div>
+
+      {/* AI errors */}
+      {aiError && (
+        <div className="relative z-10 mt-3 flex items-center gap-2 rounded-lg border border-amber-400/25 bg-amber-500/[0.07] px-3 py-2 text-xs text-amber-200">
+          <span>{aiError}</span>
+          <button
+            type="button"
+            onClick={() => setAiError(null)}
+            aria-label="Dismiss"
+            className="ml-auto flex h-5 w-5 items-center justify-center rounded text-amber-300/70 transition hover:text-amber-200"
+          >
+            <CloseIcon className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Mic error */}
       {micError && (
@@ -557,13 +709,13 @@ export default function ChatView({
                 }
               }}
               rows={1}
-              placeholder="Message the room…  (Enter to send, Shift+Enter for a new line)"
+              placeholder="Message the room…  @HackQ to ask the AI teammate"
               aria-label="Message"
               className="max-h-[120px] min-h-[44px] flex-1 resize-none rounded-xl border border-white/15 bg-white/[0.04] px-4 py-2.5 text-sm text-white caret-white outline-none transition placeholder:text-neutral-500 hover:border-white/30 focus:border-white/50 focus:ring-4 focus:ring-white/10"
             />
             <button
               type="submit"
-              disabled={!draft.trim()}
+              disabled={!draft.trim() || aiThinking}
               aria-label="Send message"
               className={cn(
                 "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-all duration-200",
@@ -609,6 +761,100 @@ export default function ChatView({
           setPlayProgress(0);
         }}
       />
+
+      {/* Plan modal — result of analyzing a voice note */}
+      <AnimatePresence>
+        {planMsg?.plan && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setPlanMsg(null)}
+          >
+            <motion.div
+              className="w-full max-w-lg overflow-hidden rounded-2xl border border-white/10 bg-[#101013] shadow-2xl"
+              initial={{ opacity: 0, y: 24, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 16, scale: 0.97 }}
+              transition={{ type: "spring", stiffness: 320, damping: 28 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 border-b border-white/10 px-5 py-4">
+                <BotAvatar />
+                <div>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-white/50">
+                    voice note → plan
+                  </p>
+                  <h2 className="text-lg font-semibold tracking-tight text-white">
+                    {planMsg.plan.title}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPlanMsg(null)}
+                  aria-label="Close"
+                  className="ml-auto flex h-8 w-8 items-center justify-center rounded-lg text-white/50 transition hover:bg-white/10 hover:text-white"
+                >
+                  <CloseIcon className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="max-h-[60vh] overflow-y-auto px-5 py-4">
+                {planMsg.transcript && (
+                  <div className="mb-4 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
+                    <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.2em] text-white/40">
+                      transcript
+                    </p>
+                    <p className="text-xs italic leading-relaxed text-white/60">
+                      “{planMsg.transcript}”
+                    </p>
+                  </div>
+                )}
+                <p className="text-sm leading-relaxed text-white/80">{planMsg.plan.summary}</p>
+                <ol className="mt-4 space-y-2">
+                  {planMsg.plan.steps.map((s, i) => (
+                    <li key={i} className="flex items-start gap-2.5 text-sm text-white/90">
+                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/15 text-[10px] font-bold text-white/70">
+                        {i + 1}
+                      </span>
+                      <span className="leading-relaxed">{s}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+
+              <div className="flex items-center gap-2 border-t border-white/10 px-5 py-4">
+                <button
+                  type="button"
+                  onClick={() => addPlanToBoard(planMsg)}
+                  className={cn(
+                    "flex h-10 flex-1 items-center justify-center gap-2 rounded-xl text-sm font-semibold transition active:scale-[0.98]",
+                    planSaved
+                      ? "border border-emerald-400/30 bg-emerald-500/10 text-emerald-300"
+                      : "bg-white text-black hover:bg-neutral-200"
+                  )}
+                >
+                  {planSaved ? <CheckIcon className="h-4 w-4" /> : <PlusIcon className="h-4 w-4" />}
+                  {planSaved ? "Saved to the idea board" : "Add to idea board"}
+                </button>
+                {onOpenBoard && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPlanMsg(null);
+                      onOpenBoard();
+                    }}
+                    className="flex h-10 items-center justify-center rounded-xl border border-white/15 px-4 text-sm font-medium text-white/80 transition hover:bg-white/10 hover:text-white"
+                  >
+                    Open board
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -621,12 +867,18 @@ function VoiceBubble({
   playing,
   progress,
   onToggle,
+  analyzing,
+  hasPlan,
+  onAnalyze,
 }: {
   msg: ChatMessage;
   mine: boolean;
   playing: boolean;
   progress: number;
   onToggle: () => void;
+  analyzing: boolean;
+  hasPlan: boolean;
+  onAnalyze: () => void;
 }) {
   const bars = waveBars(msg.id, 26);
   const duration = msg.voiceDuration ?? 0;
@@ -682,6 +934,35 @@ function VoiceBubble({
       >
         {fmtDuration(duration)}
       </span>
+      <button
+        type="button"
+        onClick={onAnalyze}
+        aria-label={hasPlan ? "View AI plan" : "Analyze with AI"}
+        title={hasPlan ? "View the AI plan for this note" : "Analyze this note with AI"}
+        className={cn(
+          "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition active:scale-90",
+          hasPlan
+            ? mine
+              ? "text-amber-600 hover:bg-black/10"
+              : "text-amber-300/90 hover:bg-white/10"
+            : mine
+              ? "text-black/40 hover:bg-black/10 hover:text-black"
+              : "text-white/35 hover:bg-white/10 hover:text-white"
+        )}
+      >
+        {analyzing ? (
+          <motion.span
+            className={cn(
+              "h-3.5 w-3.5 rounded-full border-2 border-t-transparent",
+              mine ? "border-black/60" : "border-white/70"
+            )}
+            animate={{ rotate: 360 }}
+            transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}
+          />
+        ) : (
+          <SparkleIcon className="h-3.5 w-3.5" />
+        )}
+      </button>
     </div>
   );
 }

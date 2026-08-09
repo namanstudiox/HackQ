@@ -26,7 +26,7 @@ export default function RoomSetup({
     groupName: string;
     eventName: string;
     deadline: number;
-  }) => Promise<boolean>;
+  }) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const [groupName, setGroupName] = useState("");
   const [eventName, setEventName] = useState("");
@@ -47,14 +47,14 @@ export default function RoomSetup({
       return;
     }
     setBusy(true);
-    const ok = await onDone({
+    const res = await onDone({
       groupName: groupName.trim(),
       eventName: eventName.trim() || "HackQ Sprint",
       deadline: deadlineMs,
     });
-    if (!ok) {
+    if (!res.ok) {
       setBusy(false);
-      setError("Couldn't set up the room — try again.");
+      setError(res.error ?? "Couldn't set up the room — try again.");
     }
   };
 

@@ -418,12 +418,12 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
     groupName: string;
     eventName: string;
     deadline: number;
-  }): Promise<boolean> => {
-    const cfg = await createTeam(input);
-    if (!cfg) return false;
-    rememberTeam(cfg.slug);
-    router.replace(`/room/${cfg.slug}`);
-    return true;
+  }): Promise<{ ok: boolean; error?: string }> => {
+    const res = await createTeam(input);
+    if (!res.cfg) return { ok: false, error: res.error };
+    rememberTeam(res.cfg.slug);
+    router.replace(`/room/${res.cfg.slug}`);
+    return { ok: true };
   };
 
   /** A joiner submits a code → creates a request awaiting clearance. */
@@ -921,7 +921,7 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
             {safeView === "overview" ? (
               <Overview config={config} onOpen={setView} onCopy={copyInvite} copied={copied} />
             ) : safeView === "chat" ? (
-              <ChatView config={config} me={me} />
+              <ChatView config={config} me={me} onOpenBoard={() => setView("board")} />
             ) : safeView === "board" ? (
               <IdeaBoardView config={config} me={me} />
             ) : safeView === "tasks" ? (
