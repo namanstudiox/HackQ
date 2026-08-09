@@ -1,11 +1,12 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { type MouseEvent, type ReactNode } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { NoiseTexture } from "@/components/ui/noise-texture";
 import { Beams } from "@/components/ui/beams";
-import { type RoomPath } from "@/lib/room-config";
+import { signOut, type RoomPath } from "@/lib/room-config";
 
 interface PathOption {
   path: RoomPath;
@@ -91,6 +92,16 @@ const OPTIONS: PathOption[] = [
 ];
 
 export default function PathPicker({ onPick }: { onPick: (path: RoomPath) => void }) {
+  const router = useRouter();
+
+  // Leave the room for a fresh sign-in. Navigation always wins — sign-out is
+  // fire-and-forget so a flaky Supabase call can never dead-button the link.
+  const backToSignIn = (e: MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    void signOut().catch(() => {});
+    router.push("/login");
+  };
+
   return (
     <div className="relative flex min-h-dvh w-full flex-col items-center justify-center overflow-hidden bg-black px-5 py-12 text-white">
       <NoiseTexture frequency={0.9} octaves={3} slope={0.25} noiseOpacity={0.35} />
@@ -146,6 +157,7 @@ export default function PathPicker({ onPick }: { onPick: (path: RoomPath) => voi
 
         <Link
           href="/login"
+          onClick={backToSignIn}
           className="mt-8 inline-block text-xs text-white/40 transition hover:text-white"
         >
           ← back to sign in

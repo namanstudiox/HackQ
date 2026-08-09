@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type MouseEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
-import { toLocalInput, PATH_LABELS, type RoomPath } from "@/lib/room-config";
+import { signOut, toLocalInput, PATH_LABELS, type RoomPath } from "@/lib/room-config";
 import { NoiseTexture } from "@/components/ui/noise-texture";
 import { Beams } from "@/components/ui/beams";
 import { HoverBorderGradient } from "@/components/ui/hover-border-gradient";
@@ -28,6 +29,16 @@ export default function RoomSetup({
     deadline: number;
   }) => Promise<{ ok: boolean; error?: string }>;
 }) {
+  const router = useRouter();
+
+  // Leave the room for a fresh sign-in. Navigation always wins — sign-out is
+  // fire-and-forget so a flaky Supabase call can never dead-button the link.
+  const backToSignIn = (e: MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    void signOut().catch(() => {});
+    router.push("/login");
+  };
+
   const [groupName, setGroupName] = useState("");
   const [eventName, setEventName] = useState("");
   const [deadline, setDeadline] = useState(() => fromNowLocal(QUICK_HOURS[2]));
@@ -174,6 +185,7 @@ export default function RoomSetup({
             </p>
             <Link
               href="/login"
+              onClick={backToSignIn}
               className="mt-4 inline-block text-xs text-white/40 transition hover:text-white"
             >
               ← back to sign in
