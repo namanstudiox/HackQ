@@ -80,8 +80,13 @@ begin
 
     begin
       insert into public.teams (owner_id, group_name, event_name, deadline, invite_code, slug)
-      values (auth.uid(), p_group_name, p_event_name, p_deadline, p_invite_code, v_candidate)
-      returning id into v_team;
+      values (auth.uid(), p_group_name, p_event_name, p_deadline, p_invite_code, v_candidate);
+      -- Fetch the fresh id with qualified refs: `returning id` would collide
+      -- with the `id` output parameter just like the bare `slug` did.
+      select teams.id into v_team
+      from public.teams
+      where teams.slug = v_candidate
+      limit 1;
 
       insert into public.team_members (team_id, user_id, role)
       values (v_team, auth.uid(), 'lead');
