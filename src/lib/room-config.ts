@@ -19,8 +19,9 @@ export interface TeamMember {
   status?: string;
   /** Custom profile picture as a small data URL (client-resized, ~128px). */
   pfp?: string;
-  /** Role in the room — drives the permissions matrix. */
-  role: TeamRole;
+  /** Role in the room — a built-in key ("lead" | "co-lead" | "member") or a
+   * custom role uuid from `roles`. Drives the permissions matrix. */
+  role: string;
 }
 
 /** Roles a member can hold in the room. */
@@ -50,6 +51,31 @@ export const PERMISSIONS: { id: PermissionId; label: string }[] = [
   { id: "chat", label: "Chat" },
   { id: "mood", label: "Set mood" },
 ];
+
+/** A custom role the owner defined — permissions are a per-role capability set. */
+export interface CustomRole {
+  /** uuid — stored as `team_members.role` on the members holding it. */
+  id: string;
+  name: string;
+  permissions: Record<PermissionId, boolean>;
+}
+
+/** Quick-start presets for the role creator. */
+export const CUSTOM_ROLE_TEMPLATES: {
+  name: string;
+  blurb: string;
+  permissions: Partial<Record<PermissionId, boolean>>;
+}[] = [
+  { name: "Designer", blurb: "Owns the board and the vibe", permissions: { "post-ideas": true, chat: true, mood: true } },
+  { name: "QA", blurb: "Tracks tasks and signs off", permissions: { "edit-tasks": true, chat: true, mood: true } },
+  { name: "Moderator", blurb: "Keeps the room tidy", permissions: { "approve-joins": true, chat: true, mood: true } },
+  { name: "Ops", blurb: "Runs the logistics", permissions: { "edit-tasks": true, "post-ideas": true, "approve-joins": true, chat: true, mood: true } },
+];
+
+/** All capabilities off — the base a custom role starts from. */
+export const EMPTY_PERMISSIONS: Record<PermissionId, boolean> = Object.fromEntries(
+  PERMISSIONS.map((p) => [p.id, false])
+) as Record<PermissionId, boolean>;
 
 export const ROLE_PERMISSIONS: Record<TeamRole, Record<PermissionId, boolean>> = {
   lead: {
@@ -99,6 +125,34 @@ export interface RoomSettings {
   joinLocked: boolean;
 }
 
+/* ----------------------------------------------------- role resolution */
+
+/** Label for any role — a built-in key or a custom role id. */
+export function resolveRoleLabel(role: string, roles: CustomRole[]): string {
+  const builtin = TEAM_ROLES.find((r) => r.id === role);
+  if (builtin) return builtin.label;
+  return roles.find((r) => r.id === role)?.name ?? "Member";
+}
+
+/** Capability map for any role — the built-in matrix or a custom role's own set. */
+export function resolveRolePermissions(
+  role: string,
+  roles: CustomRole[]
+): Record<PermissionId, boolean> {
+  if (role in ROLE_PERMISSIONS) return ROLE_PERMISSIONS[role as TeamRole];
+  const custom = roles.find((r) => r.id === role);
+  return custom ? { ...EMPTY_PERMISSIONS, ...custom.permissions } : EMPTY_PERMISSIONS;
+}
+
+/** Whether a role holds a capability (client-side gating + the matrix). */
+export function roleCan(
+  role: string,
+  roles: CustomRole[],
+  perm: PermissionId
+): boolean {
+  return resolveRolePermissions(role, roles)[perm];
+}
+
 export function normalizeSettings(raw: {
   modules?: unknown;
   join_locked?: unknown;
@@ -142,6 +196,10 @@ export interface RoomConfig {
   me: string;
   /** Room-wide settings — modules + join lock. */
   settings: RoomSettings;
+  /** Custom roles the owner defined (empty until one is created). */
+  roles: CustomRole[];
+  /** URL slug — this room lives at /room/{slug}. */
+  slug: string;
 }
 
 /* ------------------------------------------------------------- constants */
@@ -325,7 +383,7 @@ const iso = (ms: number) => new Date(ms).toISOString();
 
 /* ---------------------------------------------------------------- session */
 
-/** The id of the room I was last in — a convenience pointer, not data. */
+/** The slug of the room I was last in — a convenience pointer, not data. */
 const LAST_TEAM_KEY = "hackq-last-team";
 
 export function rememberTeam(teamId: string): void {
@@ -438,6 +496,7 @@ type TeamRow = {
   join_locked: boolean;
   modules: Record<ModuleId, boolean>;
   owner_id: string;
+  slug: string;
 };
 type MemberRow = {
   id: string;
@@ -449,7 +508,12 @@ type MemberRow = {
 };
 
 /** Assemble a RoomConfig for `meId` from a team row + its roster. */
-function buildConfig(team: TeamRow, members: MemberRow[], meId: string): RoomConfig {
+function buildConfig(
+  team: TeamRow,
+  members: MemberRow[],
+  meId: string,
+  roles: CustomRole[]
+): RoomConfig {
   return {
     teamId: team.id,
     groupName: team.group_name,
@@ -457,6 +521,7 @@ function buildConfig(team: TeamRow, members: MemberRow[], meId: string): RoomCon
     deadline: ts(team.deadline),
     startedAt: ts(team.started_at),
     roomCode: team.invite_code,
+    slug: team.slug,
     path: meId === team.owner_id ? "create" : "join",
     members: members.map((m) => ({
       id: m.id,
@@ -464,24 +529,42 @@ function buildConfig(team: TeamRow, members: MemberRow[], meId: string): RoomCon
       color: m.color,
       status: m.status ?? undefined,
       pfp: m.pfp ?? undefined,
-      role: (VALID_ROLES.includes(m.role)
-        ? m.role
-        : m.id === team.owner_id
-          ? "lead"
-          : "member") as TeamRole,
+      // A member's role is a built-in key or a custom role id; anything unknown
+      // (role deleted, stale row) falls back to lead (owner) / member.
+      role:
+        VALID_ROLES.includes(m.role) || roles.some((r) => r.id === m.role)
+          ? m.role
+          : m.id === team.owner_id
+            ? "lead"
+            : "member",
     })),
     me: meId,
     settings: normalizeSettings({ modules: team.modules, join_locked: team.join_locked }),
+    roles,
   };
 }
 
 async function fetchTeamConfig(teamId: string, meId: string): Promise<RoomConfig | null> {
   const { data: team, error } = await supabase()
     .from("teams")
-    .select("id, group_name, event_name, deadline, started_at, invite_code, join_locked, modules, owner_id")
+    .select("id, group_name, event_name, deadline, started_at, invite_code, join_locked, modules, owner_id, slug")
     .eq("id", teamId)
     .maybeSingle();
   if (error || !team) return null;
+
+  const { data: roleRows } = await supabase()
+    .from("team_roles")
+    .select("id, name, permissions")
+    .eq("team_id", teamId)
+    .order("created_at", { ascending: true });
+  const roles: CustomRole[] = (roleRows ?? []).map((r) => ({
+    id: r.id as string,
+    name: r.name as string,
+    permissions: {
+      ...EMPTY_PERMISSIONS,
+      ...((r.permissions ?? {}) as Record<string, boolean>),
+    },
+  }));
 
   const { data: memberRows } = await supabase()
     .from("team_members")
@@ -507,7 +590,7 @@ async function fetchTeamConfig(teamId: string, meId: string): Promise<RoomConfig
     };
   });
 
-  return buildConfig(team as unknown as TeamRow, members, meId);
+  return buildConfig(team as unknown as TeamRow, members, meId, roles);
 }
 
 /* --------------------------------------------------------------- teams */
@@ -521,22 +604,51 @@ export async function createTeam(input: {
   const me = await getCurrentUser();
   if (!me) return null;
 
-  const { data: team, error } = await supabase()
+  // URL slug from the group name, deduped against existing rooms
+  // ("Night Owl" → night-owl, night-owl-2, …).
+  const baseSlug = slugify(input.groupName);
+  const { data: existingSlugs } = await supabase()
     .from("teams")
-    .insert({
-      owner_id: me.id,
-      group_name: input.groupName,
-      event_name: input.eventName,
-      deadline: iso(input.deadline),
-      invite_code: genRoomCode(),
-    })
-    .select(
-      "id, group_name, event_name, deadline, started_at, invite_code, join_locked, modules, owner_id"
-    )
-    .single();
-  if (error || !team) return null;
+    .select("slug")
+    .like("slug", `${baseSlug}%`);
+  const taken = new Set((existingSlugs ?? []).map((r) => r.slug as string));
+  let slug = baseSlug;
+  for (let n = 2; taken.has(slug); n++) slug = `${baseSlug}-${n}`;
 
-  await supabase().from("team_members").insert({ team_id: team.id, user_id: me.id, role: "lead" });
+  const insert = async (withSlug: string) =>
+    supabase()
+      .from("teams")
+      .insert({
+        owner_id: me.id,
+        group_name: input.groupName,
+        event_name: input.eventName,
+        deadline: iso(input.deadline),
+        invite_code: genRoomCode(),
+        slug: withSlug,
+      })
+      .select(
+        "id, group_name, event_name, deadline, started_at, invite_code, join_locked, modules, owner_id, slug"
+      )
+      .single();
+
+  let { data: team, error } = await insert(slug);
+  if (error && (error as { code?: string }).code === "23505") {
+    // Slug raced with another creation — retry once with a random suffix.
+    ({ data: team, error } = await insert(`${baseSlug}-${Math.random().toString(36).slice(2, 6)}`));
+  }
+  if (error || !team) {
+    // Surface the real failure (RLS/permission problems are invisible behind
+    // the generic "Couldn't set up the room" message otherwise).
+    console.error("[createTeam] insert failed:", error?.message ?? error);
+    return null;
+  }
+
+  const { error: memberErr } = await supabase()
+    .from("team_members")
+    .insert({ team_id: team.id, user_id: me.id, role: "lead" });
+  if (memberErr) {
+    console.error("[createTeam] member insert failed:", memberErr.message);
+  }
 
   const { data: profile } = await supabase()
     .from("profiles")
@@ -551,7 +663,22 @@ export async function createTeam(input: {
     pfp: (profile?.pfp as string | null) ?? null,
     role: "lead",
   };
-  return buildConfig(team as unknown as TeamRow, [self], me.id);
+  return buildConfig(team as unknown as TeamRow, [self], me.id, []);
+}
+
+/** Look up a team by its URL slug — the /room/[slug] gateway. Any signed-in
+ * user may see that a room exists and its name; membership is checked
+ * separately (loadMyTeam / getRequestStatus). */
+export async function loadTeamBySlug(
+  slug: string
+): Promise<{ teamId: string; groupName: string } | null> {
+  const { data, error } = await supabase()
+    .from("teams")
+    .select("id, group_name")
+    .eq("slug", slug)
+    .maybeSingle();
+  if (error || !data) return null;
+  return { teamId: data.id as string, groupName: data.group_name as string };
 }
 
 /** Load a team by invite code (join lookup). Null when the code is bogus.
@@ -687,13 +814,87 @@ export async function declineRequest(teamId: string, requestId: string): Promise
   await supabase().from("join_requests").update({ status: "declined" }).eq("id", requestId);
 }
 
-/** The lead reassigns a member's role. */
+/** The owner reassigns a member's role — a built-in key or custom role id. */
 export async function setMemberRole(
   teamId: string,
   userId: string,
-  role: TeamRole
+  role: string
 ): Promise<void> {
   await supabase().from("team_members").update({ role }).eq("team_id", teamId).eq("user_id", userId);
+}
+
+/* ------------------------------------------------------ custom roles */
+
+function mapRoleRow(r: { id: unknown; name: unknown; permissions: unknown }): CustomRole {
+  return {
+    id: r.id as string,
+    name: r.name as string,
+    permissions: {
+      ...EMPTY_PERMISSIONS,
+      ...((r.permissions ?? {}) as Record<string, boolean>),
+    },
+  };
+}
+
+/** All custom roles defined for a team. */
+export async function loadTeamRoles(teamId: string): Promise<CustomRole[]> {
+  const { data, error } = await supabase()
+    .from("team_roles")
+    .select("id, name, permissions")
+    .eq("team_id", teamId)
+    .order("created_at", { ascending: true });
+  if (error || !data) return [];
+  return data.map((r) => mapRoleRow(r as never));
+}
+
+/** Define a new custom role. Name must be unique per team. */
+export async function createCustomRole(
+  teamId: string,
+  name: string,
+  permissions: Partial<Record<PermissionId, boolean>>
+): Promise<CustomRole | null> {
+  const { data, error } = await supabase()
+    .from("team_roles")
+    .insert({ team_id: teamId, name: name.trim(), permissions })
+    .select("id, name, permissions")
+    .single();
+  if (error || !data) {
+    console.error("[createCustomRole] failed:", error?.message ?? error);
+    return null;
+  }
+  return mapRoleRow(data as never);
+}
+
+/** Rename a custom role and/or replace its capability set. */
+export async function updateCustomRole(
+  teamId: string,
+  roleId: string,
+  patch: { name?: string; permissions?: Partial<Record<PermissionId, boolean>> }
+): Promise<void> {
+  const next: Record<string, unknown> = {};
+  if (patch.name !== undefined) next.name = patch.name.trim();
+  if (patch.permissions !== undefined) next.permissions = patch.permissions;
+  const { error } = await supabase()
+    .from("team_roles")
+    .update(next)
+    .eq("id", roleId)
+    .eq("team_id", teamId);
+  if (error) console.error("[updateCustomRole] failed:", error.message);
+}
+
+/** Remove a custom role — anyone holding it drops back to plain member. */
+export async function deleteCustomRole(teamId: string, roleId: string): Promise<void> {
+  await supabase()
+    .from("team_members")
+    .update({ role: "member" })
+    .eq("team_id", teamId)
+    .eq("role", roleId);
+  const { error } = await supabase()
+    .from("team_roles")
+    .delete()
+    .eq("id", roleId)
+    .eq("team_id", teamId);
+  if (error) console.error("[deleteCustomRole] failed:", error.message);
 }
 
 /** A member's own profile edits — persisted to their profiles row. */
@@ -732,6 +933,46 @@ export async function regenerateRoomCode(teamId: string): Promise<string> {
 /** Disband the room — the team row (and everything on it) is deleted. */
 export async function disbandRoom(teamId: string): Promise<void> {
   await supabase().from("teams").delete().eq("id", teamId);
+}
+
+/**
+ * Hand the room to another member. Runs in a security-definer RPC (a plain
+ * owner_id UPDATE fails RLS's WITH CHECK). The caller must be the owner and
+ * the target an approved member; the old owner steps down to member.
+ */
+export async function transferOwnership(
+  teamId: string,
+  newOwnerId: string
+): Promise<boolean> {
+  const { data, error } = await supabase().rpc("transfer_ownership", {
+    p_team: teamId,
+    p_new_owner: newOwnerId,
+  });
+  if (error) {
+    console.error("[transferOwnership] failed:", error.message);
+    return false;
+  }
+  return data === true;
+}
+
+/**
+ * Leave a team — delete my own membership row. The RLS policy
+ * `members_delete_self_or_owner` allows `user_id = auth.uid()` deletes, so any
+ * member can walk out; the team itself keeps running for everyone else.
+ */
+export async function leaveTeam(teamId: string): Promise<{ ok: boolean; error?: string }> {
+  const me = await getCurrentUser();
+  if (!me) return { ok: false, error: "You're not signed in." };
+  const { error } = await supabase()
+    .from("team_members")
+    .delete()
+    .eq("team_id", teamId)
+    .eq("user_id", me.id);
+  if (error) {
+    console.error("[leaveTeam] failed:", error.message);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true };
 }
 
 /* ---------------------------------------------------------------- chat */

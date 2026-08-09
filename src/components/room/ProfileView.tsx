@@ -175,7 +175,7 @@ export default function ProfileView({
               <div
                 className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border-2 border-black text-xl font-bold text-black transition-colors duration-300"
                 style={{ background: color }}
-                title={name.trim() || "you"}
+                aria-label={name.trim() || "you"}
               >
                 {pfp ? (
                   <img src={pfp} alt="" className="h-full w-full object-cover" />

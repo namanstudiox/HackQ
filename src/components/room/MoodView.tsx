@@ -213,7 +213,7 @@ export default function MoodView({
               return (
                 <div
                   key={m.id}
-                  title={`${m.label} · ${n}`}
+                  aria-label={`${m.label} · ${n}`}
                   className="h-full rounded-full transition-all duration-500"
                   style={{ width: `${(n / Math.max(1, checkedIn)) * 100}%`, background: m.color }}
                 />
@@ -238,7 +238,6 @@ export default function MoodView({
                     onClick={() => chooseMood(m.id)}
                     aria-pressed={active}
                     whileTap={{ scale: 0.94 }}
-                    title={m.label}
                     className={cn(
                       "flex flex-col items-center gap-1.5 rounded-xl border px-1 py-3 transition-colors",
                       active

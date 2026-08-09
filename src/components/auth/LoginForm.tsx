@@ -76,27 +76,26 @@ function RememberMe() {
   );
 }
 
-export default function LoginForm() {
+export default function LoginForm({
+  verificationFailed = false,
+}: {
+  /** /auth/callback bounced us here — a verification/recovery link failed. */
+  verificationFailed?: boolean;
+}) {
   const router = useRouter();
   const [values, setValues] = useState<LoginValues>(EMPTY);
   const [errors, setErrors] = useState<LoginErrors>({});
   const [showPassword, setShowPassword] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  // Server-rendered via the page's searchParams — identical HTML on both sides.
+  const [serverError, setServerError] = useState<string | null>(
+    verificationFailed
+      ? "We couldn't verify that link — it may have expired. Try signing in again."
+      : null
+  );
   const [forgotMsg, setForgotMsg] = useState<string | null>(null);
   const [forgotBusy, setForgotBusy] = useState(false);
-  // The /auth/callback route sends us here when a verification/recovery link
-  // failed to exchange — surface why (render-phase guard, once).
-  const [urlChecked, setUrlChecked] = useState(false);
-  if (!urlChecked && typeof window !== "undefined") {
-    setUrlChecked(true);
-    if (new URLSearchParams(window.location.search).get("error") === "verification") {
-      setServerError(
-        "We couldn't verify that link — it may have expired. Try signing in again."
-      );
-    }
-  }
 
   const set =
     (key: keyof LoginValues) =>

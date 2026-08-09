@@ -45,7 +45,7 @@ export default function JoinPending({
         if (status === "approved") {
           const cfg = await loadMyTeam(request.teamId);
           if (cfg && !cancelled) {
-            rememberTeam(cfg.teamId);
+            rememberTeam(cfg.slug);
             onEnter(cfg);
           }
         } else if (status === "declined" || status === "missing") {

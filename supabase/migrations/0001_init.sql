@@ -289,3 +289,22 @@ alter publication supabase_realtime add table public.messages;
 alter publication supabase_realtime add table public.tasks;
 alter publication supabase_realtime add table public.ideas;
 alter publication supabase_realtime add table public.moods;
+
+-- ============================================================================
+-- Table privileges for the API roles
+-- ============================================================================
+-- RLS policies are checked AFTER table grants; without these, every query
+-- fails with `permission denied for table ...` (42501) whenever the project
+-- has "Automatically expose new tables" disabled.
+grant usage on schema public to anon, authenticated;
+
+grant select, insert, update, delete on public.teams         to authenticated;
+grant select, insert, update, delete on public.team_members  to authenticated;
+grant select, insert, update, delete on public.join_requests to authenticated;
+grant select, insert, update, delete on public.messages      to authenticated;
+grant select, insert, update, delete on public.tasks         to authenticated;
+grant select, insert, update, delete on public.ideas         to authenticated;
+grant select, insert, update, delete on public.moods         to authenticated;
+
+grant select on public.profiles to authenticated;
+grant update on public.profiles to authenticated;

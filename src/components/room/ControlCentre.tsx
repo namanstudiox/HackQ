@@ -61,6 +61,14 @@ const TrashIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+const LeaveIcon = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" className={className} {...strokeProps}>
+    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+    <path d="M16 17l5-5-5-5" />
+    <path d="M21 12H9" />
+  </svg>
+);
+
 const ClockIcon = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" className={className} {...strokeProps}>
     <circle cx="12" cy="13" r="8" />
@@ -135,6 +143,8 @@ export default function ControlCentre({
   onUpdate,
   onRegenerate,
   onDisband,
+  onLeave,
+  onTransfer,
   onCopy,
   copied,
 }: {
@@ -144,6 +154,8 @@ export default function ControlCentre({
   onUpdate: (patch: RoomSettingsPatch) => void;
   onRegenerate: () => Promise<string | null>;
   onDisband: () => void;
+  onLeave: () => void;
+  onTransfer: (newOwnerId: string) => void;
   onCopy: () => void;
   copied: boolean;
 }) {
@@ -153,6 +165,9 @@ export default function ControlCentre({
   const [saved, setSaved] = useState(false);
   const [armRegen, setArmRegen] = useState(false);
   const [armDisband, setArmDisband] = useState(false);
+  const [armLeave, setArmLeave] = useState(false);
+  const [armTransfer, setArmTransfer] = useState(false);
+  const [transferTo, setTransferTo] = useState<string>("");
   const [regenCode, setRegenCode] = useState<string | null>(null);
 
   // React's recommended "adjust state during render" pattern — keep the local
@@ -453,6 +468,75 @@ export default function ControlCentre({
           </section>
         </div>
 
+        {/* Ownership — the lead can hand the room over instead of disbanding. */}
+        {isLead && (
+          <section className="relative z-10 mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-5 sm:p-6">
+            <SectionHeader
+              icon={<ShieldIcon className="h-4 w-4 text-white/60" />}
+              title="Ownership"
+              hint="Pass the room to a teammate — you step down to a member."
+            />
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <p className="max-w-md text-[13px] leading-relaxed text-white/60">
+                Handing over makes the chosen member the new lead. You stay in the room as a
+                regular member — they can hand it back to you later.
+              </p>
+              <div className="flex flex-col gap-2">
+                <select
+                  value={transferTo}
+                  onChange={(e) => {
+                    setTransferTo(e.target.value);
+                    setArmTransfer(false);
+                  }}
+                  disabled={armTransfer}
+                  aria-label="Transfer ownership to"
+                  className="h-9 rounded-md border border-white/15 bg-black px-2 text-xs text-white outline-none transition hover:border-white/30 focus:border-white/50 focus:ring-2 focus:ring-white/10 disabled:opacity-50 [color-scheme:dark]"
+                >
+                  <option value="">Choose a member…</option>
+                  {config.members
+                    .filter((m) => m.id !== config.me)
+                    .map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                </select>
+                {armTransfer ? (
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = transferTo;
+                        setArmTransfer(false);
+                        if (id) onTransfer(id);
+                      }}
+                      className="rounded-md bg-white px-3 py-1.5 text-[11px] font-bold text-black transition hover:bg-neutral-200"
+                    >
+                      Yes, hand over the room
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setArmTransfer(false)}
+                      className="rounded-md border border-white/15 px-3 py-1.5 text-[11px] text-white/60 transition hover:text-white"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!transferTo}
+                    onClick={() => setArmTransfer(true)}
+                    className="rounded-md border border-white/15 px-3 py-1.5 text-[11px] text-white/70 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Transfer ownership
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* Danger zone */}
         {isLead && (
           <section className="relative z-10 mt-4 rounded-2xl border border-red-400/20 bg-red-400/[0.03] p-5 sm:p-6">
@@ -490,6 +574,52 @@ export default function ControlCentre({
                   className="rounded-md border border-red-400/40 px-3 py-1.5 text-[11px] font-semibold text-red-300 transition hover:bg-red-400/10"
                 >
                   Disband room
+                </button>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Leaving — non-leads can walk out; the team keeps running. */}
+        {!isLead && (
+          <section className="relative z-10 mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-5 sm:p-6">
+            <SectionHeader
+              icon={<LeaveIcon className="h-4 w-4 text-white/60" />}
+              title="Leave the room"
+              hint="You can rejoin anytime with the invite code."
+            />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="max-w-md text-[13px] leading-relaxed text-white/60">
+                Leaving removes you from this team — your account stays, and the invite code keeps
+                working for everyone else.
+              </p>
+              {armLeave ? (
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setArmLeave(false);
+                      onLeave();
+                    }}
+                    className="rounded-md bg-white px-3 py-1.5 text-[11px] font-bold text-black transition hover:bg-neutral-200"
+                  >
+                    Yes, leave the room
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setArmLeave(false)}
+                    className="rounded-md border border-white/15 px-3 py-1.5 text-[11px] text-white/60 transition hover:text-white"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setArmLeave(true)}
+                  className="rounded-md border border-white/15 px-3 py-1.5 text-[11px] text-white/70 transition hover:border-white/30 hover:text-white"
+                >
+                  Leave the room
                 </button>
               )}
             </div>

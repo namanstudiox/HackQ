@@ -27,7 +27,17 @@ export default function JoinTeam({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const clean = (v: string) => v.toUpperCase().replace(/[^A-Z0-9-]/g, "");
+  /**
+   * Accept either a bare invite code ("HQ-4F2AK9XM") or a full invite link
+   * ("https://app/room?code=HQ-4F2AK9XM" — what the copy button produces).
+   * URLs get the code extracted, then everything goes through the same
+   * sanitizer (uppercase, keep only code chars, cap at 11).
+   */
+  const clean = (v: string) => {
+    const urlCode = /[?&]code=([A-Za-z0-9-]+)/.exec(v);
+    const base = urlCode ? urlCode[1] : v;
+    return base.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 11);
+  };
 
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();

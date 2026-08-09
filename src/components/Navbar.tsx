@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { scrollToHash } from "@/lib/smooth-scroll";
 
 const links = [
@@ -49,13 +50,13 @@ export default function Navbar() {
 
         {/* CTA (hard right) */}
         <div className="ml-auto flex items-center gap-3">
-          <a
+          <Link
             href="/room"
             className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-2.5 text-sm font-bold text-black transition hover:-translate-y-0.5"
           >
             Launch HackQ
             <span className="text-base leading-none">→</span>
-          </a>
+          </Link>
           <button
             type="button"
             aria-label="Toggle menu"

@@ -34,9 +34,12 @@ import {
   declineRequest,
   disbandRoom,
   getCurrentUser,
+  getRequestStatus,
+  leaveTeam,
   loadMyTeam,
   loadPendingRequests,
   loadRememberedTeam,
+  loadTeamBySlug,
   memberColor,
   regenerateRoomCode,
   rememberTeam,
@@ -44,9 +47,11 @@ import {
   setMemberRole,
   signOut,
   slugify,
+  transferOwnership,
   updateMyProfile,
   updateRoomSettings,
   PATH_LABELS,
+  type CustomRole,
   type ModuleId,
   type PendingRequest,
   type ProfilePatch,
@@ -54,12 +59,11 @@ import {
   type RoomPath,
   type RoomSettingsPatch,
   type TeamMember,
-  type TeamRole,
 } from "@/lib/room-config";
 import type { JoinRequest } from "@/components/room/JoinPending";
 
 type ViewId = "overview" | "chat" | "board" | "tasks" | "mood" | "team" | "control" | "profile";
-type Phase = "loading" | "path" | "join" | "joinPending" | "setup" | "room";
+type Phase = "loading" | "path" | "join" | "joinPending" | "setup" | "room" | "private" | "missing";
 
 const strokeProps = {
   fill: "none",
@@ -230,7 +234,7 @@ const FEATURES: { id: ViewId; label: string; desc: string; icon: ReactNode }[] =
   },
 ];
 
-export default function RoomShell() {
+export default function RoomShell({ slug: slugProp }: { slug?: string }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("loading");
   const [config, setConfig] = useState<RoomConfig | null>(null);
@@ -270,9 +274,11 @@ export default function RoomShell() {
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [approvalsOpen]);
 
-  // Decide where to land after first paint: signed-in + a remembered room →
-  // straight in; an invite-code deep link → the join screen; else the path
-  // picker. rAF keeps it hydration-safe.
+  // Decide where to land after first paint. With a slug (/room/night-owl):
+  // resolve membership — enter if approved, wait if pending, auto-request when
+  // the invite code is in the link, else show the private-room wall. Without a
+  // slug (/room): invite-code deep links lead to the join screen, a remembered
+  // room redirects to its URL, else the path picker. rAF keeps it hydration-safe.
   useEffect(() => {
     const raf = requestAnimationFrame(async () => {
       const user = await getCurrentUser();
@@ -280,28 +286,87 @@ export default function RoomShell() {
         router.replace("/login");
         return;
       }
-      // Deep link from an invite link wins over the remembered room — invite
-      // links must always lead to the join screen, even for existing users.
+
+      if (slugProp) {
+        const team = await loadTeamBySlug(slugProp);
+        if (!team) {
+          // Room gone — drop any remembered pointer so /room doesn't bounce
+          // straight back to this dead slug.
+          clearRememberedTeam();
+          setPhase("missing");
+          return;
+        }
+        setJoinReq({ teamId: team.teamId, teamName: team.groupName });
+        const status = await getRequestStatus(team.teamId);
+        if (status === "approved") {
+          const cfg = await loadMyTeam(team.teamId);
+          if (cfg) {
+            rememberTeam(cfg.slug);
+            setConfig(cfg);
+            setPhase("room");
+            return;
+          }
+          setPhase("missing");
+          return;
+        }
+        if (status === "pending") {
+          setPhase("joinPending");
+          return;
+        }
+        // Not a member — an invite link carries the code, so request access now.
+        const urlCode = new URLSearchParams(window.location.search).get("code");
+        if (urlCode) {
+          const res = await requestJoinTeam(urlCode);
+          if (res.ok) {
+            if (res.alreadyMember && res.teamId) {
+              const cfg = await loadMyTeam(res.teamId);
+              if (cfg) {
+                rememberTeam(cfg.slug);
+                router.replace(`/room/${cfg.slug}`);
+                return;
+              }
+            }
+            if (res.teamId && res.teamName) {
+              setJoinReq({ teamId: res.teamId, teamName: res.teamName });
+              setPhase("joinPending");
+              return;
+            }
+          }
+        }
+        // Not entering the room — a stale remembered pointer would trap us in
+        // a redirect loop, so drop it.
+        clearRememberedTeam();
+        setPhase("private");
+        return;
+      }
+
+      // No slug: invite-code deep links always lead to the join screen.
       const urlCode = new URLSearchParams(window.location.search).get("code");
       if (urlCode) {
         setJoinCode(urlCode);
         setPhase("join");
         return;
       }
-      const lastTeamId = loadRememberedTeam();
-      if (lastTeamId) {
-        const cfg = await loadMyTeam(lastTeamId);
-        if (cfg) {
-          setConfig(cfg);
-          setPhase("room");
+      const lastSlug = loadRememberedTeam();
+      if (lastSlug) {
+        // Legacy pointers held the team uuid — resolve those to the real room.
+        if (/^[0-9a-f-]{36}$/i.test(lastSlug)) {
+          const cfg = await loadMyTeam(lastSlug);
+          if (cfg) {
+            rememberTeam(cfg.slug);
+            router.replace(`/room/${cfg.slug}`);
+            return;
+          }
+          clearRememberedTeam();
+        } else {
+          router.replace(`/room/${lastSlug}`);
           return;
         }
-        clearRememberedTeam();
       }
       setPhase("path");
     });
     return () => cancelAnimationFrame(raf);
-  }, [router]);
+  }, [router, slugProp]);
 
   // While in the room, keep the config fresh: approvals, profile edits, role
   // changes, deadline tweaks, and new join requests all land here.
@@ -351,9 +416,8 @@ export default function RoomShell() {
   }): Promise<boolean> => {
     const cfg = await createTeam(input);
     if (!cfg) return false;
-    rememberTeam(cfg.teamId);
-    setConfig(cfg);
-    setPhase("room");
+    rememberTeam(cfg.slug);
+    router.replace(`/room/${cfg.slug}`);
     return true;
   };
 
@@ -366,9 +430,8 @@ export default function RoomShell() {
     if (res.alreadyMember && res.teamId) {
       const cfg = await loadMyTeam(res.teamId);
       if (cfg) {
-        rememberTeam(cfg.teamId);
-        setConfig(cfg);
-        setPhase("room");
+        rememberTeam(cfg.slug);
+        router.replace(`/room/${cfg.slug}`);
       }
       return { ok: true };
     }
@@ -380,14 +443,13 @@ export default function RoomShell() {
   };
 
   const handleJoinApproved = (cfg: RoomConfig) => {
-    rememberTeam(cfg.teamId);
-    setConfig(cfg);
-    setPhase("room");
+    rememberTeam(cfg.slug);
+    router.replace(`/room/${cfg.slug}`);
   };
 
   const handleJoinCancel = () => {
     setJoinReq(null);
-    setPhase("path");
+    setPhase(slugProp ? "private" : "path");
   };
 
   const handleApprove = async (id: string) => {
@@ -402,8 +464,8 @@ export default function RoomShell() {
     setPendingReqs((p) => p.filter((r) => r.id !== id));
   };
 
-  /** The lead reassigns a member's role — server + local config stay in sync. */
-  const handleRoleChange = async (memberId: string, role: TeamRole) => {
+  /** The owner reassigns a member's role — server + local config stay in sync. */
+  const handleRoleChange = async (memberId: string, role: string) => {
     if (!config) return;
     await setMemberRole(config.teamId, memberId, role);
     setConfig((c) =>
@@ -414,6 +476,11 @@ export default function RoomShell() {
           }
         : c
     );
+  };
+
+  /** Custom roles changed (created/edited/deleted in RoleManager) — merge in. */
+  const handleRolesChanged = (roles: CustomRole[]) => {
+    setConfig((c) => (c ? { ...c, roles } : c));
   };
 
   /** Control-centre settings change — persist to the server + this copy. */
@@ -475,6 +542,40 @@ export default function RoomShell() {
     setPhase("path");
   };
 
+  /** Hand the room to another member — I step down; they become lead. */
+  const handleTransferOwnership = async (newOwnerId: string) => {
+    if (!config) return;
+    const ok = await transferOwnership(config.teamId, newOwnerId);
+    if (!ok) return;
+    const meId = config.me;
+    // Reflect the handover locally: I'm a member now, they're the lead, and
+    // my path flips to "join" so the lead-only controls disappear right away
+    // (the 3s poll confirms it server-side). Drop me back to the overview —
+    // the Control Centre is now view-only for me.
+    setConfig((c) =>
+      c
+        ? {
+            ...c,
+            path: "join",
+            members: c.members.map((m) =>
+              m.id === newOwnerId ? { ...m, role: "lead" } : m.id === meId ? { ...m, role: "member" } : m
+            ),
+          }
+        : c
+    );
+    setView("overview");
+  };
+
+  /** Leave the team — my membership row is deleted, back to the path picker. */
+  const handleLeave = async () => {
+    if (!config) return;
+    const res = await leaveTeam(config.teamId);
+    if (!res.ok) return; // rare — errors are logged in the data layer
+    clearRememberedTeam();
+    setConfig(null);
+    setPhase("path");
+  };
+
   const handleLogout = async () => {
     await signOut();
     clearRememberedTeam();
@@ -485,7 +586,7 @@ export default function RoomShell() {
     if (!config) return;
     try {
       await navigator.clipboard.writeText(
-        `${window.location.origin}/room?code=${config.roomCode}`
+        `${window.location.origin}/room/${config.slug}?code=${config.roomCode}`
       );
     } catch {
       /* clipboard unavailable — still show feedback */
@@ -515,8 +616,67 @@ export default function RoomShell() {
       <JoinTeam
         initialCode={joinCode}
         onRequest={handleJoinRequest}
-        onBack={() => setPhase("path")}
+        onBack={() => setPhase(slugProp ? "private" : "path")}
       />
+    );
+  }
+
+  if (phase === "missing" || phase === "private") {
+    const privateRoom = phase === "private";
+    return (
+      <div className="relative flex min-h-dvh w-full items-center justify-center overflow-hidden bg-black px-5 py-12 text-white">
+        <NoiseTexture frequency={0.9} octaves={3} slope={0.25} noiseOpacity={0.35} />
+        <Beams />
+        <div className="relative z-10 w-full max-w-md text-center">
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-7 sm:p-9">
+            <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-white/60">
+              {privateRoom ? "// private room" : "// room not found"}
+            </p>
+            <div className="mx-auto mt-6 flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-white/5 text-white/60">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-5 w-5"
+              >
+                <rect x="4.5" y="11" width="15" height="9" rx="2" />
+                <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+              </svg>
+            </div>
+            <h1 className="mt-5 text-xl font-semibold tracking-tight">
+              {privateRoom
+                ? `${joinReq?.teamName ?? "This room"} is private`
+                : "This room doesn't exist"}
+            </h1>
+            <p className="mt-2 text-sm leading-relaxed text-white/50">
+              {privateRoom
+                ? "Only approved members can enter. Ask the team lead for the invite code — it'll take you straight in."
+                : "It may have been disbanded, or the link is wrong."}
+            </p>
+            <div className="mt-7 flex flex-col gap-2">
+              {privateRoom && (
+                <button
+                  type="button"
+                  onClick={() => setPhase("join")}
+                  className="rounded-lg bg-white px-4 py-2.5 text-sm font-bold text-black transition hover:bg-neutral-200"
+                >
+                  I have the invite code
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => router.push("/room")}
+                className="rounded-lg border border-white/15 px-4 py-2.5 text-sm text-white/70 transition hover:border-white/30 hover:text-white"
+              >
+                Go back to start
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -648,7 +808,7 @@ export default function RoomShell() {
           <button
             type="button"
             onClick={handleLogout}
-            title="Log out"
+            aria-label="Log out"
             className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-[11px] text-white/50 transition hover:border-white/30 hover:text-white"
           >
             <LogOutIcon className="h-3.5 w-3.5" />
@@ -749,6 +909,7 @@ export default function RoomShell() {
                 onApprove={handleApprove}
                 onDecline={handleDecline}
                 onRoleChange={handleRoleChange}
+                onRolesChanged={handleRolesChanged}
               />
             ) : safeView === "control" ? (
               <ControlCentre
@@ -757,6 +918,8 @@ export default function RoomShell() {
                 onUpdate={handleUpdateSettings}
                 onRegenerate={handleRegenerateCode}
                 onDisband={handleDisband}
+                onLeave={handleLeave}
+                onTransfer={handleTransferOwnership}
                 onCopy={copyInvite}
                 copied={copied}
               />

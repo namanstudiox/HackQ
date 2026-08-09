@@ -35,6 +35,16 @@ export default function LiquidCursor() {
   const [visible, setVisible] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [pressed, setPressed] = useState(false);
+  // Mount gate — `enabled` (pointer/media-query values) can only be computed on
+  // the client, so SSR renders null while the client's first paint would render
+  // the cursor: a hydration mismatch. Render nothing until we've hydrated, then
+  // flip on. Deferred via setTimeout so the state flip isn't synchronous in the
+  // effect body (compiler rule) — same shape as AuthMapBackground.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setMounted(true), 0);
+    return () => window.clearTimeout(t);
+  }, []);
 
   const x = useMotionValue(-100);
   const y = useMotionValue(-100);
@@ -88,7 +98,7 @@ export default function LiquidCursor() {
     };
   }, [enabled, x, y]);
 
-  if (!enabled) return null;
+  if (!mounted || !enabled) return null;
 
   return (
     <motion.div

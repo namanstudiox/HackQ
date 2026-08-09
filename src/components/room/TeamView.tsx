@@ -5,12 +5,15 @@ import { Avatar } from "@/components/room/Avatar";
 import {
   memberColor,
   PERMISSIONS,
-  ROLE_PERMISSIONS,
+  resolveRoleLabel,
+  resolveRolePermissions,
   TEAM_ROLES,
+  type CustomRole,
   type PendingRequest,
   type RoomConfig,
   type TeamRole,
 } from "@/lib/room-config";
+import RoleManager from "@/components/room/RoleManager";
 import { cn } from "@/lib/utils";
 
 const strokeProps = {
@@ -27,27 +30,32 @@ const CheckIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
-const ROLE_PILL: Record<TeamRole, string> = {
+const BUILTIN_PILL: Record<TeamRole, string> = {
   lead: "bg-white text-black",
   "co-lead": "border border-white/30 bg-white/10 text-white",
   member: "border border-white/10 bg-white/5 text-white/70",
 };
+
+const CUSTOM_PILL = "border border-indigo-300/30 bg-indigo-400/10 text-indigo-200";
+
+function pillFor(role: string): string {
+  return role in BUILTIN_PILL ? BUILTIN_PILL[role as TeamRole] : CUSTOM_PILL;
+}
 
 const cardClass =
   "rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-white/[0.01] p-5 sm:p-6";
 
 const labelClass = "font-mono text-[10px] uppercase tracking-[0.25em] text-white/40";
 
-function RoleBadge({ role }: { role: TeamRole }) {
-  const meta = TEAM_ROLES.find((r) => r.id === role);
+function RoleBadge({ role, roles }: { role: string; roles: CustomRole[] }) {
   return (
     <span
       className={cn(
         "inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold",
-        ROLE_PILL[role]
+        pillFor(role)
       )}
     >
-      {meta?.label ?? role}
+      {resolveRoleLabel(role, roles)}
     </span>
   );
 }
@@ -59,6 +67,7 @@ export default function TeamView({
   onApprove,
   onDecline,
   onRoleChange,
+  onRolesChanged,
 }: {
   config: RoomConfig;
   pendingReqs: PendingRequest[];
@@ -66,9 +75,15 @@ export default function TeamView({
   isLead: boolean;
   onApprove: (id: string) => void;
   onDecline: (id: string) => void;
-  onRoleChange: (memberId: string, role: TeamRole) => void;
+  onRoleChange: (memberId: string, role: string) => void;
+  onRolesChanged: (roles: CustomRole[]) => void;
 }) {
   const leads = Math.max(1, config.members.filter((m) => m.role === "lead").length);
+  // Matrix columns: the three built-ins, then the team's custom roles.
+  const matrixCols: { id: string; label: string }[] = [
+    ...TEAM_ROLES.map((r) => ({ id: r.id, label: r.label })),
+    ...config.roles.map((r) => ({ id: r.id, label: r.name })),
+  ];
 
   return (
     <div className="mx-auto w-full max-w-6xl px-5 py-10 sm:px-8">
@@ -115,22 +130,36 @@ export default function TeamView({
                     )}
                   </p>
                   <p className="text-[11px] text-white/40">
-                    {TEAM_ROLES.find((r) => r.id === m.role)?.blurb}
+                    {TEAM_ROLES.find((r) => r.id === m.role)?.blurb ??
+                      (config.roles.some((r) => r.id === m.role)
+                        ? "Custom role — see capabilities"
+                        : "")}
                   </p>
                 </div>
-                <RoleBadge role={m.role} />
-                {isLead && m.id !== "lead" && (
+                <RoleBadge role={m.role} roles={config.roles} />
+                {isLead && m.id !== config.me && (
                   <select
                     value={m.role}
-                    onChange={(e) => onRoleChange(m.id, e.target.value as TeamRole)}
+                    onChange={(e) => onRoleChange(m.id, e.target.value)}
                     aria-label={`Change ${m.name}'s role`}
                     className="h-8 rounded-md border border-white/15 bg-black px-2 text-xs text-white outline-none transition hover:border-white/30 focus:border-white/50 focus:ring-2 focus:ring-white/10 [color-scheme:dark]"
                   >
-                    {TEAM_ROLES.map((r) => (
+                    {/* "lead" is intentionally absent — the only way to become
+                        lead is for the current owner to hand the room over. */}
+                    {TEAM_ROLES.filter((r) => r.id !== "lead").map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.label}
                       </option>
                     ))}
+                    {config.roles.length > 0 && (
+                      <optgroup label="Custom">
+                        {config.roles.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
                 )}
               </div>
@@ -149,15 +178,15 @@ export default function TeamView({
                     <th className="py-2 pr-4 font-mono text-[10px] uppercase tracking-[0.2em] text-white/40">
                       capability
                     </th>
-                    {TEAM_ROLES.map((r) => (
+                    {matrixCols.map((c) => (
                       <th
-                        key={r.id}
+                        key={c.id}
                         className={cn(
                           "px-2 py-2 text-center text-[11px] font-semibold",
-                          r.id === "lead" ? "text-white" : "text-white/60"
+                          c.id === "lead" ? "text-white" : "text-white/60"
                         )}
                       >
-                        {r.label}
+                        {c.label}
                       </th>
                     ))}
                   </tr>
@@ -166,9 +195,9 @@ export default function TeamView({
                   {PERMISSIONS.map((p) => (
                     <tr key={p.id}>
                       <td className="py-2.5 pr-4 text-[13px] text-white/70">{p.label}</td>
-                      {TEAM_ROLES.map((r) => (
-                        <td key={r.id} className="px-2 py-2.5 text-center">
-                          {ROLE_PERMISSIONS[r.id][p.id] ? (
+                      {matrixCols.map((c) => (
+                        <td key={c.id} className="px-2 py-2.5 text-center">
+                          {resolveRolePermissions(c.id, config.roles)[p.id] ? (
                             <CheckIcon className="mx-auto h-4 w-4 text-white" />
                           ) : (
                             <span className="text-[13px] leading-none text-white/20">—</span>
@@ -221,6 +250,18 @@ export default function TeamView({
             )}
           </section>
         </div>
+
+        {/* Custom-role studio — owner only. */}
+        {isLead && (
+          <div className="relative z-10 mt-4">
+            <RoleManager
+              teamId={config.teamId}
+              roles={config.roles}
+              members={config.members}
+              onRolesChanged={onRolesChanged}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

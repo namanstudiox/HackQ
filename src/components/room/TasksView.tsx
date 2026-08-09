@@ -9,7 +9,7 @@ import {
   deleteTask,
   loadTasks,
   subscribeToRoom,
-  ROLE_PERMISSIONS,
+  roleCan,
   TASK_PRIORITIES,
   TASK_STATUSES,
   updateTask,
@@ -75,8 +75,9 @@ export default function TasksView({
   const draftRef = useRef<HTMLInputElement | null>(null);
   const editRef = useRef<HTMLInputElement | null>(null);
 
-  // Permission: "Edit tasks" from the roles matrix (lead + co-lead).
-  const canEdit = ROLE_PERMISSIONS[me.role]["edit-tasks"];
+  // Permission: "Edit tasks" from the roles matrix — built-in roles use their
+  // hardcoded set, custom roles their own capabilities.
+  const canEdit = roleCan(me.role, config.roles, "edit-tasks");
 
   /* ---------- server-hosted sync (load + realtime, debounced) ---------- */
   useEffect(() => {
@@ -368,7 +369,7 @@ export default function TasksView({
                   setEditingId(t.id);
                   setEditTitle(t.title);
                 }}
-                title={t.title}
+                aria-label={t.title}
               >
                 {editingId === t.id ? (
                   <input
@@ -468,7 +469,7 @@ function AssigneePill({
         type="button"
         disabled={!canEdit}
         onClick={() => canEdit && setOpen((o) => !o)}
-        title={task.assigneeName}
+        aria-label={task.assigneeName}
         className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] py-0.5 pl-0.5 pr-2 text-[11px] text-white/70 transition hover:border-white/30"
       >
         <Avatar name={task.assigneeName ?? "?"} color={task.assigneeColor ?? "#888"} src={task.assigneePfp} size="sm" />
@@ -658,7 +659,7 @@ function TaskCard({
               type="button"
               disabled={!canEdit}
               onClick={() => canEdit && setAssigneeOpen((o) => !o)}
-              title={task.assigneeName}
+              aria-label={task.assigneeName}
               className="flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] py-0.5 pl-0.5 pr-2 text-[10px] text-white/70 transition hover:border-white/30"
             >
               <Avatar name={task.assigneeName ?? "?"} color={task.assigneeColor ?? "#888"} src={task.assigneePfp} size="sm" />

@@ -537,8 +537,7 @@ export default function ChatView({
             <button
               type="button"
               onClick={startRecording}
-              aria-label="Record a voice note"
-              title="Record a voice note (max 60s)"
+              aria-label="Record a voice note (max 60s)"
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-white/[0.04] text-white/60 transition hover:border-white/30 hover:text-white active:scale-95"
             >
               <MicIcon className="h-4.5 w-4.5" />
