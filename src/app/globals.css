@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #000;
+  --color-ink: #f5f5f7;
+  --font-sans: "Familjen Grotesk Variable", -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --animate-marquee: marquee var(--duration, 45s) linear infinite;
+  --animate-orbit: orbit calc(var(--duration) * 1s) linear infinite;
+
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+
+  @keyframes orbit {
+    0% {
+      transform: rotate(calc(var(--angle) * 1deg))
+        translateY(calc(var(--radius) * 1px))
+        rotate(calc(var(--angle) * -1deg));
+    }
+    100% {
+      transform: rotate(calc(var(--angle) * 1deg + 360deg))
+        translateY(calc(var(--radius) * 1px))
+        rotate(calc((var(--angle) * -1deg) - 360deg));
+    }
+  }
+}
+
+@keyframes ambientShift {
+  0%, 100% { transform: scale(1.02); filter: brightness(0.95); }
+  50%      { transform: scale(1.08); filter: brightness(1.05); }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+
+/* Presence dot / live indicators */
+@keyframes pulseDot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.7); opacity: 0.45; }
+}
+
+.pulse-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pulseDot 2.2s ease-in-out infinite;
+}
+
+/* Voice equalizer bars */
+@keyframes eqBar {
+  0%, 100% { transform: scaleY(0.55); }
+  50%      { transform: scaleY(1); }
+}
+
+.eq-bar {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: eqBar 1.5s ease-in-out infinite;
+}
+
+/* Gentle float (sticky notes, dragged card) */
+@keyframes floaty {
+  0%, 100% { transform: translateY(0) rotate(var(--rot, 0deg)); }
+  50%      { transform: translateY(-5px) rotate(var(--rot, 0deg)); }
+}
+
+/* Soft glow breathing */
+@keyframes glowPulse {
+  0%, 100% { opacity: 0.75; }
+  50%      { opacity: 1; }
+}
+
+/* Hero scroll hint line */
+@keyframes scrollHint {
+  0%   { transform: translateY(0); opacity: 1; }
+  70%  { transform: translateY(9px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eq-bar,
+  .pulse-dot {
+    animation: none;
+  }
+
+  /* Also silence the inline-styled decorative animations (floaty, glowPulse,
+     scrollHint, blink, hero ambientShift) for reduced-motion users. */
+  [style*="animation"] {
+    animation: none !important;
+  }
+}
+
+/* ---------- Custom cursor ---------- */
+/* Hide the native cursor only while the custom one is active (fine pointers). */
+html.has-custom-cursor,
+html.has-custom-cursor * {
+  cursor: none;
+}
+
+html.has-custom-cursor input,
+html.has-custom-cursor textarea,
+html.has-custom-cursor select {
+  cursor: auto;
+}
+
+/* ---------- Lime text selection ---------- */
+::selection {
+  background: #9eff00;
+  color: #000;
+}
+
+/* ---------- Liquid cursor ---------- */
+.liquid-blob {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: #9eff00;
+}
+
+.liquid-blob--main {
+  width: 34px;
+  height: 34px;
+  background: linear-gradient(135deg, #b4ff39, #9eff00);
+}
+
+.liquid-blob--core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #79c400;
+  transform: translate(-50%, -50%);
+}
+
+/* ---------- Anchor offset for the fixed navbar ---------- */
+section[id],
+main[id] {
+  scroll-margin-top: 5rem;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  /* clip (not hidden) so position:sticky keeps working */
+  overflow-x: clip;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
