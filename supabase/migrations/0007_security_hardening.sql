@@ -70,7 +70,9 @@ begin
   for v_attempt in 1..5 loop
     v_candidate := v_base;
     v_n := 1;
-    while exists (select 1 from public.teams where slug = v_candidate) loop
+    -- Qualify `teams.slug` — the RETURNS TABLE declares a `slug` output
+    -- parameter, and an unqualified reference is ambiguous (42702).
+    while exists (select 1 from public.teams where teams.slug = v_candidate) loop
       v_n := v_n + 1;
       v_candidate := v_base || '-' || v_n::text;
     end loop;
