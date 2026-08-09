@@ -99,4 +99,4 @@ Everything used is intentionally open. Big thanks to:
 
 ## License
 
-MIT — use it, fork it, win a hackathon with it.
+MIT — use it, fork it,Built For a Hackathon.
