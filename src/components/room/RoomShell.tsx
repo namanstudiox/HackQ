@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { cn } from "@/lib/utils";
 import RoomCountdown from "@/components/room/RoomCountdown";
+import RoomDashboard from "@/components/room/RoomDashboard";
 import RoomSetup from "@/components/room/RoomSetup";
 import PathPicker from "@/components/room/PathPicker";
 import JoinTeam from "@/components/room/JoinTeam";
@@ -36,9 +37,10 @@ import {
   getCurrentUser,
   getRequestStatus,
   leaveTeam,
+  loadMyProfile,
+  loadMyRooms,
   loadMyTeam,
   loadPendingRequests,
-  loadRememberedTeam,
   loadTeamBySlug,
   memberColor,
   regenerateRoomCode,
@@ -53,6 +55,7 @@ import {
   PATH_LABELS,
   type CustomRole,
   type ModuleId,
+  type MyRoom,
   type PendingRequest,
   type ProfilePatch,
   type RoomConfig,
@@ -63,7 +66,7 @@ import {
 import type { JoinRequest } from "@/components/room/JoinPending";
 
 type ViewId = "overview" | "chat" | "board" | "tasks" | "mood" | "team" | "control" | "profile";
-type Phase = "loading" | "path" | "join" | "joinPending" | "setup" | "room" | "private" | "missing";
+type Phase = "loading" | "rooms" | "path" | "join" | "joinPending" | "setup" | "room" | "private" | "missing";
 
 const strokeProps = {
   fill: "none",
@@ -237,6 +240,13 @@ const FEATURES: { id: ViewId; label: string; desc: string; icon: ReactNode }[] =
 export default function RoomShell({ slug: slugProp }: { slug?: string }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("loading");
+  const [rooms, setRooms] = useState<MyRoom[]>([]);
+  const [meInfo, setMeInfo] = useState<{
+    id: string;
+    name: string;
+    color: string;
+    pfp: string | null;
+  } | null>(null);
   const [config, setConfig] = useState<RoomConfig | null>(null);
   const [path, setPath] = useState<RoomPath>("create");
   const [view, setView] = useState<ViewId>("overview");
@@ -337,28 +347,27 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
         return;
       }
 
-      // No slug: invite-code deep links always lead to the join screen.
+      // No slug: invite-code deep links lead to the join screen; otherwise
+      // show the rooms dashboard (or the create/join picker when empty).
       const urlCode = new URLSearchParams(window.location.search).get("code");
       if (urlCode) {
         setJoinCode(urlCode);
         setPhase("join");
         return;
       }
-      const lastSlug = loadRememberedTeam();
-      if (lastSlug) {
-        // Legacy pointers held the team uuid — resolve those to the real room.
-        if (/^[0-9a-f-]{36}$/i.test(lastSlug)) {
-          const cfg = await loadMyTeam(lastSlug);
-          if (cfg) {
-            rememberTeam(cfg.slug);
-            router.replace(`/room/${cfg.slug}`);
-            return;
-          }
-          clearRememberedTeam();
-        } else {
-          router.replace(`/room/${lastSlug}`);
-          return;
-        }
+      const myRooms = await loadMyRooms();
+      if (myRooms.length > 0) {
+        setRooms(myRooms);
+        const me = await getCurrentUser();
+        const profile = await loadMyProfile();
+        setMeInfo({
+          id: me?.id ?? "",
+          name: profile?.name ?? me?.email?.split("@")[0] ?? "you",
+          color: profile?.color ?? "#ffffff",
+          pfp: profile?.pfp ?? null,
+        });
+        setPhase("rooms");
+        return;
       }
       setPhase("path");
     });
@@ -445,7 +454,7 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
 
   const handleJoinCancel = () => {
     setJoinReq(null);
-    setPhase(slugProp ? "private" : "path");
+    setPhase(slugProp ? "private" : rooms.length > 0 ? "rooms" : "path");
   };
 
   const handleApprove = async (id: string) => {
@@ -540,7 +549,9 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
     await disbandRoom(config.teamId);
     clearRememberedTeam();
     setConfig(null);
-    setPhase("path");
+    const updated = await loadMyRooms();
+    setRooms(updated);
+    setPhase(updated.length > 0 ? "rooms" : "path");
   };
 
   /** Hand the room to another member — I step down; they become lead. */
@@ -572,7 +583,9 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
     if (!res.ok) return; // rare — errors are logged in the data layer
     clearRememberedTeam();
     setConfig(null);
-    setPhase("path");
+    const updated = await loadMyRooms();
+    setRooms(updated);
+    setPhase(updated.length > 0 ? "rooms" : "path");
   };
 
   const handleLogout = async () => {
@@ -597,6 +610,22 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
 
   if (phase === "loading") {
     return <div aria-busy="true" className="h-dvh w-full bg-black" />;
+  }
+
+  if (phase === "rooms") {
+    return (
+      <RoomDashboard
+        rooms={rooms}
+        me={meInfo}
+        onCreate={() => {
+          setPath("create");
+          setPhase("setup");
+        }}
+        onJoin={() => setPhase("join")}
+        onEnter={(slug) => router.push(`/room/${slug}`)}
+        onLogout={handleLogout}
+      />
+    );
   }
 
   if (phase === "path") {

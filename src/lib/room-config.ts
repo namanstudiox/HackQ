@@ -677,6 +677,80 @@ export async function loadMyTeam(teamId: string): Promise<RoomConfig | null> {
   return fetchTeamConfig(teamId, me.id);
 }
 
+/** A room the current user belongs to — powers the /room dashboard. */
+export interface MyRoom {
+  teamId: string;
+  groupName: string;
+  slug: string;
+  role: string;
+  ownerId: string;
+  memberCount: number;
+  deadline: string;
+}
+
+/** Every team the current user is a member of, newest first. */
+export async function loadMyRooms(): Promise<MyRoom[]> {
+  const me = await getCurrentUser();
+  if (!me) return [];
+
+  const { data: memberships } = await supabase()
+    .from("team_members")
+    .select("team_id, role")
+    .eq("user_id", me.id);
+  if (!memberships || memberships.length === 0) return [];
+  const teamIds = memberships.map((m) => m.team_id as string);
+
+  const { data: teams } = await supabase()
+    .from("teams")
+    .select("id, group_name, slug, owner_id, deadline, created_at")
+    .in("id", teamIds)
+    .order("created_at", { ascending: false });
+  if (!teams) return [];
+
+  // Roster sizes for the cards (RLS allows members to read their teams).
+  const { data: rows } = await supabase()
+    .from("team_members")
+    .select("team_id")
+    .in("team_id", teamIds);
+  const countMap = new Map<string, number>();
+  for (const row of rows ?? []) {
+    const id = row.team_id as string;
+    countMap.set(id, (countMap.get(id) ?? 0) + 1);
+  }
+
+  const roleMap = new Map(memberships.map((m) => [m.team_id as string, m.role as string]));
+  return teams.map((t) => ({
+    teamId: t.id as string,
+    groupName: t.group_name as string,
+    slug: (t.slug as string) ?? "",
+    role: roleMap.get(t.id as string) ?? "member",
+    ownerId: t.owner_id as string,
+    memberCount: countMap.get(t.id as string) ?? 1,
+    deadline: t.deadline as string,
+  }));
+}
+
+/** The current user's profile row — for headers and identity chips. */
+export async function loadMyProfile(): Promise<{
+  name: string;
+  color: string;
+  pfp: string | null;
+} | null> {
+  const me = await getCurrentUser();
+  if (!me) return null;
+  const { data } = await supabase()
+    .from("profiles")
+    .select("name, color, pfp")
+    .eq("id", me.id)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    name: (data.name as string) ?? "Teammate",
+    color: (data.color as string) ?? "#ffffff",
+    pfp: (data.pfp as string | null) ?? null,
+  };
+}
+
 /** Submit a join request for the current user; the lead approves it. When the
  * user is already a member, `alreadyMember` is true so the caller can enter
  * the room directly. */
