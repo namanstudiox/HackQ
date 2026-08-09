@@ -63,6 +63,16 @@ export async function POST(req: Request) {
   const comma = voice.indexOf(",");
   const mime = /^data:([^;]+);/.exec(voice)?.[1] ?? "audio/webm";
   const raw = voice.slice(comma + 1);
+  // The recorder enforces a 60s max client-side; enforce a generous server cap
+  // so a crafted oversized "voice" blob can't force an expensive base64 decode
+  // + upstream transcription (memory/CPU DoS). ~1MB base64 is a long recording;
+  // 8MB leaves huge margin while stopping the megabyte-bomb abuse.
+  if (raw.length > 8_000_000) {
+    return NextResponse.json(
+      { error: "That voice note is too large to analyze." },
+      { status: 413 }
+    );
+  }
   const bytes = new Uint8Array(Buffer.from(raw, "base64"));
   if (!bytes.length) {
     return NextResponse.json({ error: "That voice note is empty." }, { status: 400 });
