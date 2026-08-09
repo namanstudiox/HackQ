@@ -259,9 +259,8 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
     []
   );
 
-  // Close the approvals dropdown on outside taps. A document listener (not a
-  // fixed backdrop) so it keeps working despite the header's backdrop-filter
-  // making it a containing block for fixed descendants.
+  // Close approvals on outside taps — document listener (the header's
+  // backdrop-filter is a containing block, so a fixed backdrop wouldn't work).
   useEffect(() => {
     if (!approvalsOpen) return;
     const onPointerDown = (e: PointerEvent) => {
@@ -274,11 +273,9 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [approvalsOpen]);
 
-  // Decide where to land after first paint. With a slug (/room/night-owl):
-  // resolve membership — enter if approved, wait if pending, auto-request when
-  // the invite code is in the link, else show the private-room wall. Without a
-  // slug (/room): invite-code deep links lead to the join screen, a remembered
-  // room redirects to its URL, else the path picker. rAF keeps it hydration-safe.
+  // Decide where to land after first paint: resolve membership for slug rooms
+  // (enter / pending / auto-request / private wall), or deep-link to join for
+  // /room?code=. rAF keeps it hydration-safe.
   useEffect(() => {
     const raf = requestAnimationFrame(async () => {
       const user = await getCurrentUser();
@@ -290,8 +287,7 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
       if (slugProp) {
         const team = await loadTeamBySlug(slugProp);
         if (!team) {
-          // Room gone — drop any remembered pointer so /room doesn't bounce
-          // straight back to this dead slug.
+          // Room gone — drop the remembered pointer so /room doesn't bounce back.
           clearRememberedTeam();
           setPhase("missing");
           return;
@@ -327,8 +323,7 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
               }
             }
             if (res.teamId && res.teamName) {
-              // Drop the invite code from the URL — it's been consumed, and
-              // leaving it visible invites re-submission / link sharing.
+              // Strip the consumed invite code from the URL.
               router.replace(window.location.pathname, { scroll: false });
               setJoinReq({ teamId: res.teamId, teamName: res.teamName });
               setPhase("joinPending");
@@ -336,8 +331,7 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
             }
           }
         }
-        // Not entering the room — a stale remembered pointer would trap us in
-        // a redirect loop, so drop it.
+        // Not entering — drop the remembered pointer (prevents a redirect loop).
         clearRememberedTeam();
         setPhase("private");
         return;
@@ -371,8 +365,7 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
     return () => cancelAnimationFrame(raf);
   }, [router, slugProp]);
 
-  // While in the room, keep the config fresh: approvals, profile edits, role
-  // changes, deadline tweaks, and new join requests all land here.
+  // Keep config fresh while in the room (approvals, profiles, roles, deadline).
   useEffect(() => {
     const teamId = config?.teamId;
     if (phase !== "room" || !teamId) return;
@@ -556,10 +549,8 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
     const ok = await transferOwnership(config.teamId, newOwnerId);
     if (!ok) return;
     const meId = config.me;
-    // Reflect the handover locally: I'm a member now, they're the lead, and
-    // my path flips to "join" so the lead-only controls disappear right away
-    // (the 3s poll confirms it server-side). Drop me back to the overview —
-    // the Control Centre is now view-only for me.
+    // Reflect the handover locally: I'm a member, they're the lead, and I'm
+    // bounced to the overview (the poll confirms it server-side).
     setConfig((c) =>
       c
         ? {
@@ -713,8 +704,7 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
       ? view
       : "overview"
     : view;
-  // Who am I? The member whose id matches config.me ("lead" or the approved
-  // request id). Drives chat authorship + presence highlighting.
+  // Who am I? The member matching config.me — drives authorship + presence.
   const me = config.members.find((m) => m.id === config.me) ?? config.members[0];
   // Who can manage this room (approvals etc.)? The lead, or a co-lead.
   const canManage = isLead || me?.role === "co-lead";

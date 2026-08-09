@@ -90,14 +90,12 @@ export default function RoomCountdown({
   size?: "sm" | "lg";
   className?: string;
 }) {
-  // 0 until mounted — SSR and the first client paint both render dashes, so
-  // there's no hydration mismatch from Date.now().
+  // 0 until mounted — SSR and first paint both render dashes (no Date.now() mismatch).
   const [now, setNow] = useState(0);
   const reduce = useReducedMotion();
 
   useEffect(() => {
-    // First tick via rAF (async, so it doesn't cascade a synchronous render),
-    // then every second after.
+    // First tick via rAF, then every second.
     const raf = requestAnimationFrame(() => setNow(Date.now()));
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
@@ -134,9 +132,8 @@ export default function RoomCountdown({
     totalMs && totalMs > 0 ? Math.min(1, Math.max(0, remaining / totalMs)) : 0;
   const dashOffset = RING_CIRCUMFERENCE * (1 - fraction);
 
-  // The honest drain over a 48h window is ~invisible per second, so the ring
-  // gets a real seconds hand (like a watch) + a bead at the arc tip — visible
-  // motion that's still honest. Angles start at 12 o'clock (ring is -rotate-90).
+  // A per-second drain is invisible, so the ring adds a seconds hand + arc bead
+  // for honest visible motion. Angles start at 12 o'clock (-rotate-90).
   const seconds = now ? Math.floor((remaining % 60000) / 1000) : 0;
   const handAngle = (seconds / 60) * Math.PI * 2 - Math.PI / 2;
   const handX = 32 + RING_RADIUS * Math.cos(handAngle);
@@ -154,10 +151,9 @@ export default function RoomCountdown({
   ];
 
   return (
-    // The @container wrapper lets the inner flex flip to a row once this
-    // widget gets ~32rem of room (control centre card) and stack inside the
-    // narrow overview card. Container queries only match descendants, so the
-    // responsive classes live on the inner div, not the container itself.
+    // Container queries: the inner flex flips to a row at ~32rem (control-centre
+    // card) and stacks in the narrow overview card. Queries match descendants,
+    // so the responsive classes live on the inner div.
     <div className={cn("@container w-full", className)}>
       <div className="flex w-full flex-col items-center gap-4 @lg:flex-row @lg:gap-6">
       {/* Progress ring — drains 1s-linear so it never jumps a second. The

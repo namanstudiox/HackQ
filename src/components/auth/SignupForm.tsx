@@ -8,6 +8,7 @@ import AuthField from "@/components/auth/AuthField";
 import PasswordToggle from "@/components/auth/PasswordToggle";
 import PasswordStrength from "@/components/auth/PasswordStrength";
 import { signUp } from "@/lib/room-config";
+import { isPwnedPassword } from "@/lib/pwned";
 import { validateSignup, type SignupErrors, type SignupValues } from "@/components/auth/validate";
 
 const EMPTY: SignupValues = { name: "", email: "", password: "" };
@@ -91,6 +92,18 @@ export default function SignupForm() {
     }
     setSubmitting(true);
     setServerError(null);
+    // Free HaveIBeenPwned check (k-anonymity) — the same breach database
+    // Supabase's paid "Leaked password protection" uses. Fail-open: if the
+    // API is unreachable, the signup proceeds.
+    const pwned = await isPwnedPassword(values.password);
+    if (pwned) {
+      setSubmitting(false);
+      setErrors((e) => ({
+        ...e,
+        password: "This password was found in a known data breach — pick a different one.",
+      }));
+      return;
+    }
     const res = await signUp(values.name, values.email, values.password);
     setSubmitting(false);
     if (!res.ok) {

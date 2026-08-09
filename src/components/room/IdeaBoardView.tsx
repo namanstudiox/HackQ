@@ -210,8 +210,7 @@ export default function IdeaBoardView({
     if (editing === note.id) return;
     e.stopPropagation();
     setSelected(note.id);
-    // Capture the pointer so fast drags keep tracking outside the canvas,
-    // FigJam-style.
+    // Capture the pointer so fast drags keep tracking outside the canvas.
     e.currentTarget.setPointerCapture?.(e.pointerId);
     dragRef.current = {
       kind: "note",
@@ -224,8 +223,8 @@ export default function IdeaBoardView({
   };
 
   const onPointerMove = (e: ReactPointerEvent) => {
-    // Publish my cursor via realtime presence (throttled ~60ms). e.timeStamp
-    // is monotonic — keeps this handler pure for lint.
+    // Publish my cursor via realtime presence, throttled. e.timeStamp is
+    // monotonic (keeps the handler pure for lint).
     if (e.timeStamp - cursorSentRef.current > 60) {
       cursorSentRef.current = e.timeStamp;
       const w = toWorld(e.clientX, e.clientY);
@@ -260,8 +259,7 @@ export default function IdeaBoardView({
     const d = dragRef.current;
     if (d?.kind === "note" && d.id && d.x !== undefined && d.y !== undefined) {
       if (canPost) {
-        // Persist from the drag ref itself — never from a possibly-stale render
-        // closure.
+        // Persist from the drag ref — never a stale render closure.
         void moveIdea(config.teamId, d.id, d.x, d.y);
       }
     }

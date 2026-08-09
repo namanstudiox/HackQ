@@ -154,24 +154,21 @@ export default function ChatView({
   const timerRef = useRef<number | null>(null);
   const secsRef = useRef(0);
   const discardRef = useRef(false);
-  // Guards finalizeRecording against state updates after the view unmounts
-  // (cleanup stops the recorder, which fires onstop asynchronously).
+  // Guards finalizeRecording against updates after unmount (cleanup stops the
+  // recorder, which fires onstop asynchronously).
   const aliveRef = useRef(true);
 
   /* ---------- voice playback ---------- */
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [playProgress, setPlayProgress] = useState(0);
-  // Which note the element is currently being pointed at — stale
-  // canplaythrough handlers from a previously-clicked note check this and bail.
+  // The note the element is pointed at + the pending canplaythrough handler —
+  // stale handlers from abandoned notes check this and bail.
   const playTargetRef = useRef<string | null>(null);
-  // The currently-pending canplaythrough handler (removed before re-pointing
-  // the element, so abandoned notes can't accumulate orphaned listeners).
   const pendingPlayRef = useRef<(() => void) | null>(null);
 
-  // Server-hosted chat: load once, then live-update via Supabase realtime.
-  // Realtime events (including your own inserts) are debounced into a single
-  // refetch so message bursts don't re-download the whole history each time.
+  // Load once, then live-update via Supabase realtime (debounced refetch so
+  // bursts don't re-download the whole history).
   useEffect(() => {
     let alive = true;
     let debounce: number | null = null;
@@ -432,9 +429,8 @@ export default function ChatView({
           messages.map((m) => {
             const mine = m.authorId === me.id;
             const playing = playingId === m.id;
-            // Live identity — resolve the member's CURRENT name/pfp/color on
-            // every message they've sent (profile edits propagate retroactively),
-            // falling back to the send-time snapshot if they've left the room.
+            // Live identity — current name/pfp/color, falling back to the
+            // send-time snapshot if the member has left.
             const member = config.members.find((x) => x.id === m.authorId);
             const author = member
               ? { name: member.name, color: member.color, pfp: member.pfp }
@@ -593,8 +589,7 @@ export default function ChatView({
         className="hidden"
         preload="auto"
         onError={() => {
-          // A media element error (unreadable/unsupported source) with a note
-          // in flight — tell the user instead of leaving a dead button.
+          // Media error with a note in flight — tell the user, don't leave a dead button.
           if (playTargetRef.current) {
             playTargetRef.current = null;
             setPlayingId(null);

@@ -202,10 +202,7 @@ export interface RoomConfig {
   slug: string;
 }
 
-/* ------------------------------------------------------------- constants */
-
-// Muted, premium tones — deliberately no lime. The lead avatar is neutral
-// white so the only color in the room comes from teammates' identities.
+/* ------------------------------------------------------------- constants */  // Muted, premium tones — deliberately no lime; the lead stays neutral white.
 export const MEMBER_COLORS = [
   "#818cf8", // indigo
   "#7dd3fc", // sky
@@ -604,9 +601,8 @@ export async function createTeam(input: {
   const me = await getCurrentUser();
   if (!me) return null;
 
-  // Runs in a security-definer RPC: slug dedupe + the owner's lead row happen
-  // server-side and atomically, so creation no longer needs the (now
-  // member-only) `teams` SELECT that used to probe for slug collisions.
+  // Security-definer RPC: slug dedupe + the owner's lead row happen atomically
+  // server-side (non-members can't SELECT teams for slug probing anymore).
   const { data, error } = await supabase().rpc("create_team", {
     p_group_name: input.groupName,
     p_event_name: input.eventName,
@@ -643,9 +639,8 @@ export async function createTeam(input: {
 export async function loadTeamBySlug(
   slug: string
 ): Promise<{ teamId: string; groupName: string } | null> {
-  // Goes through a security-definer RPC: non-members can't SELECT teams
-  // directly (that would leak invite codes), so the RPC returns only the
-  // minimum fields needed to show the private-room wall / join flow.
+  // Security-definer RPC: non-members can't SELECT teams (invite-code leak),
+  // so this returns only the fields the private wall / join flow needs.
   const { data, error } = await supabase().rpc("lookup_team_by_slug", {
     p_slug: slug,
   });
@@ -662,8 +657,7 @@ export async function loadTeamByCode(
   code: string
 ): Promise<{ teamId: string; groupName: string; joinLocked: boolean } | null> {
   const normalized = normalizeCode(code);
-  // Security-definer RPC: returns only id / group_name / join_locked — the
-  // invite code itself and the rest of the row stay hidden from non-members.
+  // Security-definer RPC — returns only id / group_name / join_locked.
   const { data, error } = await supabase().rpc("lookup_team_by_code", {
     p_code_key: normalized,
   });
@@ -700,7 +694,6 @@ export async function requestJoinTeam(
   const team = await loadTeamByCode(code);
   if (!team) return { ok: false, error: "No room found with that code." };
 
-  // Already a member? Join straight in.
   const { data: existingMember } = await supabase()
     .from("team_members")
     .select("user_id")
@@ -713,8 +706,7 @@ export async function requestJoinTeam(
   if (team.joinLocked)
     return { ok: false, error: "This room has paused new joins — ask the lead to unlock it." };
 
-  // A previously-declined request would block the unique (team_id, user_id)
-  // insert forever — clear it first so the person can ask again.
+  // Clear a previously-declined request — its unique row would block re-requesting.
   await supabase()
     .from("join_requests")
     .delete()

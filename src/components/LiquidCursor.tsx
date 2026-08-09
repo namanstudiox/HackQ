@@ -23,9 +23,8 @@ export default function LiquidCursor() {
   const [pointerFine] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(pointer: fine)").matches
   );
-  // Low-end / small-screen fallback: the full-viewport goo filter re-rasterizes
-  // on every pointer move, so skip it and render plain blobs instead.
-  // Evaluated once — device capability doesn't change at runtime.
+  // Low-end / small screens: the goo filter re-rasterizes on every pointer
+  // move, so render plain blobs instead. Evaluated once.
   const [lowPower] = useState(() => {
     if (typeof window === "undefined") return false;
     const cores = navigator.hardwareConcurrency ?? 8;
@@ -35,11 +34,9 @@ export default function LiquidCursor() {
   const [visible, setVisible] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [pressed, setPressed] = useState(false);
-  // Mount gate — `enabled` (pointer/media-query values) can only be computed on
-  // the client, so SSR renders null while the client's first paint would render
-  // the cursor: a hydration mismatch. Render nothing until we've hydrated, then
-  // flip on. Deferred via setTimeout so the state flip isn't synchronous in the
-  // effect body (compiler rule) — same shape as AuthMapBackground.
+  // Mount gate — `enabled` is client-only, so render null until hydrated to
+  // keep SSR and first paint identical (setTimeout defers the flip past the
+  // effect, satisfying the compiler rule).
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     const t = window.setTimeout(() => setMounted(true), 0);
@@ -56,10 +53,8 @@ export default function LiquidCursor() {
   const tailX = useSpring(x, { stiffness: 150, damping: 26, mass: 0.7 });
   const tailY = useSpring(y, { stiffness: 150, damping: 26, mass: 0.7 });
 
-  // The cursor only activates on fine-pointer devices once we *know* the user
-  // has no reduced-motion preference (useReducedMotion is null until motion
-  // resolves the media query). Derived from render-time values, so there is no
-  // effect-driven setState.
+  // Activate only on fine pointers without reduced-motion — derived from
+  // render-time values (no effect-driven setState).
   const enabled = reduceMotion === false && pointerFine;
 
   useEffect(() => {
