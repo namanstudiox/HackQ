@@ -604,50 +604,21 @@ export async function createTeam(input: {
   const me = await getCurrentUser();
   if (!me) return null;
 
-  // URL slug from the group name, deduped against existing rooms
-  // ("Night Owl" → night-owl, night-owl-2, …).
-  const baseSlug = slugify(input.groupName);
-  const { data: existingSlugs } = await supabase()
-    .from("teams")
-    .select("slug")
-    .like("slug", `${baseSlug}%`);
-  const taken = new Set((existingSlugs ?? []).map((r) => r.slug as string));
-  let slug = baseSlug;
-  for (let n = 2; taken.has(slug); n++) slug = `${baseSlug}-${n}`;
-
-  const insert = async (withSlug: string) =>
-    supabase()
-      .from("teams")
-      .insert({
-        owner_id: me.id,
-        group_name: input.groupName,
-        event_name: input.eventName,
-        deadline: iso(input.deadline),
-        invite_code: genRoomCode(),
-        slug: withSlug,
-      })
-      .select(
-        "id, group_name, event_name, deadline, started_at, invite_code, join_locked, modules, owner_id, slug"
-      )
-      .single();
-
-  let { data: team, error } = await insert(slug);
-  if (error && (error as { code?: string }).code === "23505") {
-    // Slug raced with another creation — retry once with a random suffix.
-    ({ data: team, error } = await insert(`${baseSlug}-${Math.random().toString(36).slice(2, 6)}`));
-  }
+  // Runs in a security-definer RPC: slug dedupe + the owner's lead row happen
+  // server-side and atomically, so creation no longer needs the (now
+  // member-only) `teams` SELECT that used to probe for slug collisions.
+  const { data, error } = await supabase().rpc("create_team", {
+    p_group_name: input.groupName,
+    p_event_name: input.eventName,
+    p_deadline: iso(input.deadline),
+    p_invite_code: genRoomCode(),
+  });
+  const team = Array.isArray(data) ? data[0] : data;
   if (error || !team) {
     // Surface the real failure (RLS/permission problems are invisible behind
     // the generic "Couldn't set up the room" message otherwise).
     console.error("[createTeam] insert failed:", error?.message ?? error);
     return null;
-  }
-
-  const { error: memberErr } = await supabase()
-    .from("team_members")
-    .insert({ team_id: team.id, user_id: me.id, role: "lead" });
-  if (memberErr) {
-    console.error("[createTeam] member insert failed:", memberErr.message);
   }
 
   const { data: profile } = await supabase()
@@ -672,28 +643,37 @@ export async function createTeam(input: {
 export async function loadTeamBySlug(
   slug: string
 ): Promise<{ teamId: string; groupName: string } | null> {
-  const { data, error } = await supabase()
-    .from("teams")
-    .select("id, group_name")
-    .eq("slug", slug)
-    .maybeSingle();
-  if (error || !data) return null;
-  return { teamId: data.id as string, groupName: data.group_name as string };
+  // Goes through a security-definer RPC: non-members can't SELECT teams
+  // directly (that would leak invite codes), so the RPC returns only the
+  // minimum fields needed to show the private-room wall / join flow.
+  const { data, error } = await supabase().rpc("lookup_team_by_slug", {
+    p_slug: slug,
+  });
+  const row = Array.isArray(data) ? data[0] : data;
+  if (error || !row) return null;
+  return { teamId: row.id as string, groupName: row.group_name as string };
 }
 
 /** Load a team by invite code (join lookup). Null when the code is bogus.
  * Codes are displayed as "HQ-XXXX" but matched via the generated `code_key`
  * column (dash stripped, uppercase) — so "HQ-4F2AK9XM" and "hq4f2ak9xm" both
  * resolve. */
-export async function loadTeamByCode(code: string): Promise<{ teamId: string; groupName: string } | null> {
+export async function loadTeamByCode(
+  code: string
+): Promise<{ teamId: string; groupName: string; joinLocked: boolean } | null> {
   const normalized = normalizeCode(code);
-  const { data, error } = await supabase()
-    .from("teams")
-    .select("id, group_name")
-    .eq("code_key", normalized)
-    .maybeSingle();
-  if (error || !data) return null;
-  return { teamId: data.id as string, groupName: data.group_name as string };
+  // Security-definer RPC: returns only id / group_name / join_locked — the
+  // invite code itself and the rest of the row stay hidden from non-members.
+  const { data, error } = await supabase().rpc("lookup_team_by_code", {
+    p_code_key: normalized,
+  });
+  const row = Array.isArray(data) ? data[0] : data;
+  if (error || !row) return null;
+  return {
+    teamId: row.id as string,
+    groupName: row.group_name as string,
+    joinLocked: Boolean(row.join_locked),
+  };
 }
 
 /** Load a team's full config for the current user (null if not a member). */
@@ -730,13 +710,17 @@ export async function requestJoinTeam(
   if (existingMember)
     return { ok: true, teamId: team.teamId, teamName: team.groupName, alreadyMember: true };
 
-  const { data: teamRow } = await supabase()
-    .from("teams")
-    .select("join_locked")
-    .eq("id", team.teamId)
-    .maybeSingle();
-  if ((teamRow as { join_locked?: boolean } | null)?.join_locked)
+  if (team.joinLocked)
     return { ok: false, error: "This room has paused new joins — ask the lead to unlock it." };
+
+  // A previously-declined request would block the unique (team_id, user_id)
+  // insert forever — clear it first so the person can ask again.
+  await supabase()
+    .from("join_requests")
+    .delete()
+    .eq("team_id", team.teamId)
+    .eq("user_id", me.id)
+    .eq("status", "declined");
 
   const { error } = await supabase().from("join_requests").insert({
     team_id: team.teamId,

@@ -14,6 +14,7 @@ import {
   joinPresence,
   loadIdeas,
   moveIdea,
+  roleCan,
   subscribeToRoom,
   updateIdeaText,
   NOTE_COLORS,
@@ -72,6 +73,8 @@ export default function IdeaBoardView({
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [nextColor, setNextColor] = useState<string>(NOTE_COLORS[0]);
+  // Capability gate — mirrors the server-side `post-ideas` RLS policy.
+  const canPost = roleCan(me.role, config.roles, "post-ideas");
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{
@@ -256,14 +259,17 @@ export default function IdeaBoardView({
   const onPointerUp = () => {
     const d = dragRef.current;
     if (d?.kind === "note" && d.id && d.x !== undefined && d.y !== undefined) {
-      // Persist from the drag ref itself — never from a possibly-stale render
-      // closure.
-      void moveIdea(config.teamId, d.id, d.x, d.y);
+      if (canPost) {
+        // Persist from the drag ref itself — never from a possibly-stale render
+        // closure.
+        void moveIdea(config.teamId, d.id, d.x, d.y);
+      }
     }
     dragRef.current = null;
   };
 
   const addNoteAt = async (worldX: number, worldY: number) => {
+    if (!canPost) return;
     const note = await addIdea(config.teamId, {
       text: "",
       color: nextColor,
@@ -292,7 +298,7 @@ export default function IdeaBoardView({
   };
 
   const commitEdit = () => {
-    if (!editing) return;
+    if (!editing || !canPost) return;
     const text = draft.trim();
     void updateIdeaText(config.teamId, editing, text);
     setNotes((prev) => prev.map((n) => (n.id === editing ? { ...n, text } : n)));
@@ -313,6 +319,7 @@ export default function IdeaBoardView({
   };
 
   const removeNote = (id: string) => {
+    if (!canPost) return;
     void deleteIdea(config.teamId, id);
     setNotes((prev) => prev.filter((n) => n.id !== id));
     setSelected(null);
@@ -411,8 +418,10 @@ export default function IdeaBoardView({
               onPointerDown={(e) => beginNoteDrag(e, n)}
               onDoubleClick={(e) => {
                 e.stopPropagation();
-                setEditing(n.id);
-                setDraft(n.text);
+                if (canPost) {
+                  setEditing(n.id);
+                  setDraft(n.text);
+                }
               }}
             >
               {isEditing ? (
@@ -457,7 +466,7 @@ export default function IdeaBoardView({
                   </span>
                   <span className="truncate text-[10px] font-medium opacity-60">{n.authorName}</span>
                 </div>
-                {isSelected && (
+                {isSelected && canPost && (
                   <button
                     type="button"
                     onPointerDown={(e) => e.stopPropagation()}
@@ -514,7 +523,11 @@ export default function IdeaBoardView({
         <button
           type="button"
           onClick={addNoteCenter}
-          className="flex items-center gap-1.5 rounded-full bg-white px-3.5 py-1.5 text-[11px] font-bold text-black transition hover:bg-neutral-200 active:scale-95"
+          disabled={!canPost}
+          className={cn(
+            "flex items-center gap-1.5 rounded-full bg-white px-3.5 py-1.5 text-[11px] font-bold text-black transition hover:bg-neutral-200 active:scale-95",
+            !canPost && "cursor-not-allowed opacity-40 hover:bg-white"
+          )}
         >
           <PlusIcon className="h-3 w-3" />
           Add note

@@ -7,6 +7,7 @@ import { Avatar } from "@/components/room/Avatar";
 import {
   appendChatMessage,
   loadChat,
+  roleCan,
   subscribeToRoom,
   type ChatMessage,
   type RoomConfig,
@@ -140,6 +141,8 @@ export default function ChatView({
   const listRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  // Capability gate — mirrors the server-side `chat` RLS policy.
+  const canChat = roleCan(me.role, config.roles, "chat");
 
   /* ---------- voice recording ---------- */
   const [recording, setRecording] = useState(false);
@@ -502,7 +505,8 @@ export default function ChatView({
       )}
 
       {/* Composer */}
-      <form onSubmit={send} className="relative z-10 mt-4 flex items-end gap-2">
+      {canChat ? (
+        <form onSubmit={send} className="relative z-10 mt-4 flex items-end gap-2">
         {recording ? (
           <div className="flex min-h-[44px] flex-1 items-center gap-3 rounded-xl border border-rose-400/25 bg-rose-500/[0.06] px-4">
             <span className="relative flex h-2.5 w-2.5 shrink-0">
@@ -576,7 +580,12 @@ export default function ChatView({
             </button>
           </>
         )}
-      </form>
+        </form>
+      ) : (
+        <p className="relative z-10 mt-4 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3 text-center text-xs text-white/40">
+          Your role doesn&apos;t include chat — ask the lead to grant it.
+        </p>
+      )}
 
       {/* Single shared player — keeps "only one note at a time" trivially true. */}
       <audio

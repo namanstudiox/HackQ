@@ -6,6 +6,7 @@ import { Beams } from "@/components/ui/beams";
 import { Avatar } from "@/components/room/Avatar";
 import {
   loadMoods,
+  roleCan,
   setMood,
   subscribeToRoom,
   MOODS,
@@ -79,6 +80,8 @@ export default function MoodView({
   const [noteDraft, setNoteDraft] = useState("");
   // Stable "now" (purity-safe) bumped every 30s so relative times stay fresh.
   const [now, setNow] = useState(() => Date.now());
+  // Capability gate — mirrors the server-side `mood` RLS policy.
+  const canMood = roleCan(me.role, config.roles, "mood");
 
   // Server-hosted sync: load once, then live-update via Supabase realtime
   // (debounced so bursts coalesce into a single refetch).
@@ -137,6 +140,7 @@ export default function MoodView({
   /** Clicking a mood checks in instantly (keeps any saved note). Re-tapping
    * the same mood refreshes the check-in (fresh timestamp). */
   const chooseMood = async (id: MoodId) => {
+    if (!canMood) return;
     const rec = await setMood(config.teamId, {
       mood: id,
       note: myRecord?.note,
@@ -235,14 +239,18 @@ export default function MoodView({
                   <motion.button
                     key={m.id}
                     type="button"
-                    onClick={() => chooseMood(m.id)}
+                    onClick={() => {
+                      if (canMood) void chooseMood(m.id);
+                    }}
+                    disabled={!canMood}
                     aria-pressed={active}
                     whileTap={{ scale: 0.94 }}
                     className={cn(
                       "flex flex-col items-center gap-1.5 rounded-xl border px-1 py-3 transition-colors",
                       active
                         ? "border-white/40 bg-white/[0.08]"
-                        : "border-white/10 bg-white/[0.02] hover:border-white/25 hover:bg-white/[0.05]"
+                        : "border-white/10 bg-white/[0.02] hover:border-white/25 hover:bg-white/[0.05]",
+                      !canMood && "cursor-not-allowed opacity-50 hover:border-white/10 hover:bg-white/[0.02]"
                     )}
                   >
                     <span style={{ color: active ? m.color : "rgba(255,255,255,0.55)" }}>

@@ -8,6 +8,7 @@ import AuthShell from "@/components/auth/AuthShell";
 import AuthField from "@/components/auth/AuthField";
 import PasswordToggle from "@/components/auth/PasswordToggle";
 import { sendPasswordReset, signIn } from "@/lib/room-config";
+import { safeRedirectPath } from "@/lib/safe-next";
 import { validateLogin, type LoginErrors, type LoginValues } from "@/components/auth/validate";
 
 const EMPTY: LoginValues = { email: "", password: "" };
@@ -129,7 +130,8 @@ export default function LoginForm({
       return;
     }
     // Honor invite deep links: /login?next=/room?code=HQ-…
-    const next = new URLSearchParams(window.location.search).get("next") ?? "/room";
+    // `next` is user-controlled — sanitize against open redirects.
+    const next = safeRedirectPath(new URLSearchParams(window.location.search).get("next"));
     router.push(next);
   };
 

@@ -327,6 +327,9 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
               }
             }
             if (res.teamId && res.teamName) {
+              // Drop the invite code from the URL — it's been consumed, and
+              // leaving it visible invites re-submission / link sharing.
+              router.replace(window.location.pathname, { scroll: false });
               setJoinReq({ teamId: res.teamId, teamName: res.teamName });
               setPhase("joinPending");
               return;
@@ -454,12 +457,17 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
 
   const handleApprove = async (id: string) => {
     if (!config) return;
+    // DB-backed guard (RLS), mirrored here so the UI can't even attempt it.
+    const myRole = config.members.find((m) => m.id === config.me)?.role;
+    if (myRole !== "lead" && myRole !== "co-lead") return;
     await approveRequest(config.teamId, id);
     setPendingReqs((p) => p.filter((r) => r.id !== id));
   };
 
   const handleDecline = async (id: string) => {
     if (!config) return;
+    const myRole = config.members.find((m) => m.id === config.me)?.role;
+    if (myRole !== "lead" && myRole !== "co-lead") return;
     await declineRequest(config.teamId, id);
     setPendingReqs((p) => p.filter((r) => r.id !== id));
   };
@@ -708,6 +716,8 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
   // Who am I? The member whose id matches config.me ("lead" or the approved
   // request id). Drives chat authorship + presence highlighting.
   const me = config.members.find((m) => m.id === config.me) ?? config.members[0];
+  // Who can manage this room (approvals etc.)? The lead, or a co-lead.
+  const canManage = isLead || me?.role === "co-lead";
 
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden bg-black text-white">
@@ -748,7 +758,7 @@ export default function RoomShell({ slug: slugProp }: { slug?: string }) {
             <span className="hidden sm:inline">{copied ? "copied" : config.roomCode}</span>
           </button>
 
-          {pendingReqs.length > 0 && (
+          {canManage && pendingReqs.length > 0 && (
             <div className="relative" ref={approvalsRef}>
               <button
                 type="button"
