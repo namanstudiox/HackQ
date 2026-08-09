@@ -47,7 +47,7 @@ begin
     -- Drop any event trigger wired to it, whatever its name.
     for trg in
       select evtname from pg_event_trigger
-      where evtfun = to_regprocedure('public.rls_auto_enable()')
+      where evtfoid = to_regprocedure('public.rls_auto_enable()')::oid
     loop
       execute format('drop event trigger %I', trg.evtname);
     end loop;
