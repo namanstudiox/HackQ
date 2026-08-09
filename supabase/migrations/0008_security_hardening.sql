@@ -39,13 +39,15 @@ end $$;
 
 -- ---------- 2. rls_auto_enable — remove the auto-RLS leftover ----------
 do $$
+declare
+  trg record;
 begin
   if to_regprocedure('public.rls_auto_enable()') is not null then
     revoke execute on function public.rls_auto_enable() from anon, authenticated, public;
     -- Drop any event trigger wired to it, whatever its name.
     for trg in
       select evtname from pg_event_trigger
-      where evtfun = 'public.rls_auto_enable'::regproc
+      where evtfun = to_regprocedure('public.rls_auto_enable()')
     loop
       execute format('drop event trigger %I', trg.evtname);
     end loop;
